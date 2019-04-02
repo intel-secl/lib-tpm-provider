@@ -1,0 +1,7 @@
+# A successful build produces the following files:
+tpm-provider/target/lib-tpm-provider-*-with-dependencies.jar
+tpm-provider/target/lib-tpm-provider-*-dependencies.zip
+tpm-provider/target/lib-tpm-provider-*.jar
+tpm-provider/target/lib-tpm-provider-*-javadoc.zip
+tpm-provider-integration/target/tpm-provider-integration-*.jar
+tpm-provider-integration/target/tpm-provider-integration-*-with-dependencies.jar

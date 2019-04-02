@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="tpm-provider" default="all" basedir=".">
+    <description>
+        Run "ant ready" to ensure you have all pre-requisites to build
+        Run "ant" or "ant build" to build the entire project
+    </description>
+    
+    <target name="info">
+        <echoproperties/>
+    </target>
+    
+    <target name="init">
+        <!-- maven 3.3.3 has mvn.cmd instead of mvn.bat -->
+        <condition property="cmd.maven" value="mvn.cmd">
+            <os family="windows"/>
+        </condition>
+        <condition property="cmd.maven" value="mvn">
+            <os family="unix"/>
+        </condition>
+        <condition property="env.LINUX_TARGET" value="generic">
+            <not><isset property="env.LINUX_TARGET"/></not>
+        </condition>
+    </target>
+    
+    <target name="clean" depends="init">
+        <!-- library -->
+        <exec executable="${cmd.maven}" dir="tpm-provider" resultproperty="mavenExitCleanLibrary">
+            <env key="LINUX_TARGET" value="${env.LINUX_TARGET}"/>
+            <arg value="clean"/>
+        </exec>
+        <fail message="Cannot clean project library" status="${mavenExitCleanLibrary}">
+            <condition><not><equals arg1="${mavenExitCleanLibrary}" arg2="0"/></not></condition>
+        </fail>
+        <!-- integration -->
+        <exec executable="${cmd.maven}" dir="tpm-provider-integration" resultproperty="mavenExitCleanIntegration">
+            <env key="LINUX_TARGET" value="${env.LINUX_TARGET}"/>
+            <arg value="clean"/>
+        </exec>
+        <fail message="Cannot clean project integration" status="${mavenExitCleanIntegration}">
+            <condition><not><equals arg1="${mavenExitCleanIntegration}" arg2="0"/></not></condition>
+        </fail> 
+    </target>
+    
+    <target name="build" depends="init">
+        <exec executable="${cmd.maven}" dir="tpm-provider" resultproperty="mavenExitBuildFeatures">
+            <env key="LINUX_TARGET" value="${env.LINUX_TARGET}"/>
+            <!--<arg value="-DskipTests=true"/>-->
+            <arg value="install"/>
+        </exec>
+        <fail message="Cannot build project features" status="${mavenExitBuildFeatures}">
+            <condition><not><equals arg1="${mavenExitBuildFeatures}" arg2="0"/></not></condition>
+        </fail>
+    </target>
+    
+    <target name="integration" depends="init">
+        <exec executable="${cmd.maven}" dir="tpm-provider-integration" resultproperty="mavenExitBuildIntegration">
+            <env key="LINUX_TARGET" value="${env.LINUX_TARGET}"/>
+            <!--<arg value="-DskipTests=true"/>-->
+            <arg value="install"/>
+        </exec>
+        <fail message="Cannot build integration project" status="${mavenExitBuildIntegration}">
+            <condition><not><equals arg1="${mavenExitBuildIntegration}" arg2="0"/></not></condition>
+        </fail>
+    </target>
+    
+    <target name="javadoc" depends="init">
+        <!-- the root pom and all projects -->
+        <exec executable="${cmd.maven}" dir="tpm-provider" resultproperty="mavenExitJavadoc">
+            <env key="LINUX_TARGET" value="${env.LINUX_TARGET}"/>
+            <arg value="-Ddependency.locations.enabled=false"/>
+            <arg value="-Drelease"/>
+            <arg value="-DskipTests=true"/>
+            <arg value="javadoc:javadoc"/>
+            <arg value="site:site"/>
+            <arg value="install"/>
+        </exec>
+        <fail message="Failed to build javadoc" status="${mavenExitJavadoc}">
+            <condition><not><equals arg1="${mavenExitJavadoc}" arg2="0"/></not></condition>
+        </fail>
+    </target>
+    
+    <target name="all" depends="clean,javadoc"/>
+    
+    <target name="klocwork" depends="init">
+        <exec executable="klocwork.sh" dir="tpm-provider" resultproperty="mavenExitKlocwork"/>
+        <fail message="Failed to run klocwork scan" status="${mavenExitKlocwork}">
+            <condition><not><equals arg1="${mavenExitKlocwork}" arg2="0"/></not></condition>
+        </fail>
+    </target>
+    
+    <target name="build-with-scans">
+        <parallel>
+            <exec executable="ant">
+                <arg value="all"/>
+            </exec>
+            <exec executable="ant">
+                <arg value="klocwork"/>
+            </exec>
+        </parallel>
+    </target>
+</project>
