@@ -96,7 +96,7 @@ class TpmWindowsV12 extends TpmWindows {
             throw new TpmException("TpmWindowsV12.collateIdentityRequest failed", ex);
         }
     }
-    
+
     @Override
     public byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest)
             throws IOException, TpmException {

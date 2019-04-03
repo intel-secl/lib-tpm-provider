@@ -71,7 +71,7 @@ class TpmWindowsV20 extends TpmWindows {
             throw new TpmException("TpmWindowsV20.collateIdentityRequest failed to parse pcaPubKey", ex);
         }
     }
-    
+
     @Override
     public byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest)
             throws IOException, TpmException {

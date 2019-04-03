@@ -4,26 +4,30 @@
  */
 package com.intel.mtwilson.core.tpm;
 
+import com.intel.mtwilson.core.common.utils.MeasurementUtils;
 import com.intel.mtwilson.core.tpm.model.CertifiedKey;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
 import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
-import java.io.File;
-import java.io.IOException;
+
+import java.io.*;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.cert.CertificateEncodingException;
 import java.security.PublicKey;
-import java.util.Arrays;
-import java.util.EnumSet;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.SystemUtils;
+
+import javax.xml.bind.JAXBException;
+import javax.xml.stream.XMLStreamException;
 
 /**
  * <h1>Tpm</h1>
@@ -39,7 +43,9 @@ public abstract class Tpm {
     /**
      *
      */
+    private final static org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(Tpm.class);
     protected final static String KEY_NAME = "HIS_Identity_Key";
+    private static String MEASUREMENT_FILE_PREFIX = "measurement_";
 
     /**
      * <p>
@@ -62,7 +68,39 @@ public abstract class Tpm {
      * @throws IOException
      * @throws TpmException
      */
-    public abstract String getTcbMeasurement() throws IOException, TpmException;
+    public abstract List<String> getTcbMeasurements() throws IOException, TpmException;
+
+    protected List<String> getTcbMeasurements(File tcbMeasurementsDir) throws TpmException {
+        List<String> tcbMeasurements = new ArrayList<>();
+        if (tcbMeasurementsDir.exists() && getMeasurementFiles(tcbMeasurementsDir) != null) {
+            for (File tcbMeasurementFile : getMeasurementFiles(tcbMeasurementsDir)) {
+                LOG.debug("Processing the TCB measurement XML file @ {}.", tcbMeasurementFile.toString());
+                tcbMeasurements.add(getMeasurement(tcbMeasurementFile));
+            }
+        } else {
+            LOG.warn("TCB measurement XML directory does not exist at {}.", tcbMeasurementsDir.getAbsolutePath());
+        }
+        return tcbMeasurements;
+    }
+
+    private File[] getMeasurementFiles(File tcbMeasurementsDir) {
+        return tcbMeasurementsDir.listFiles((File dir, String name) ->
+                name.startsWith(MEASUREMENT_FILE_PREFIX)
+        );
+    }
+
+    private String getMeasurement(File tcbMeasurementFile) throws TpmException {
+        String tcbMeasurementString;
+        try (InputStream in = new FileInputStream(tcbMeasurementFile)) {
+            tcbMeasurementString = IOUtils.toString(in, Charset.forName("UTF-8"));
+            LOG.info("TCB measurement XML string: {}", tcbMeasurementString);
+            MeasurementUtils.parseMeasurementXML(tcbMeasurementString);
+        } catch (IOException | JAXBException | XMLStreamException e) {
+            LOG.warn("IOException, invalid measurement.xml: {}", e.getMessage());
+            throw new TpmException("Invalid measurement.xml file. Cannot unmarshal/marshal object using jaxb.");
+        }
+        return tcbMeasurementString;
+    }
 
     protected String getModulesFromMeasureLogXml(String xmlInput) {
         // Since the output from the script will have lot of details and we are interested in just the module section, we will

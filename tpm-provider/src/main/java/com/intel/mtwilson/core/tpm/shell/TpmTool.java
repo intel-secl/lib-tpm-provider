@@ -13,13 +13,13 @@ import org.apache.commons.exec.CommandLine;
 import org.apache.commons.exec.DefaultExecutor;
 import org.apache.commons.exec.Executor;
 import org.apache.commons.exec.PumpStreamHandler;
+import org.apache.commons.lang.ArrayUtils;
 
 /**
  *
  * @author dczech
  */
 public class TpmTool extends CommandLine {
-
     /**
      *
      * @param executable
@@ -61,7 +61,7 @@ public class TpmTool extends CommandLine {
     public final CommandLineResult execute() throws IOException {
         return this.execute(new HashMap<>());
     }
-    
+    // TODO: Remove loggers after testing
     /**
      *
      * @param environment

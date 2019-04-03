@@ -16,10 +16,10 @@ import gov.niarl.his.privacyca.TpmUtils;
 import java.io.File;
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
-import java.nio.charset.Charset;
 import java.nio.file.Paths;
 import java.security.PublicKey;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
@@ -365,14 +365,9 @@ abstract class TpmWindows extends Tpm {
      * @throws TpmException
      */
     @Override
-    public String getTcbMeasurement() throws IOException, TpmException {
-        File tcbMeasurementFile = Paths.get("/Windows", "Logs", "MeasuredBoot", "measurement.xml").toFile();
-        if (tcbMeasurementFile.exists()) {
-            return FileUtils.readFileToString(tcbMeasurementFile, Charset.forName("UTF-8"));
-        } else {
-            LOG.debug("TpmWindows.getTcbMeasurement measurement.xml does not exist");
-            throw new TpmException("TpmWindows.getTcbMeasurement measurement.xml does not exist");
-        }
+    public List<String> getTcbMeasurements() throws IOException, TpmException {
+        File tcbMeasurementdir = Paths.get("/Windows", "Logs", "MeasuredBoot").toFile();
+        return getTcbMeasurements(tcbMeasurementdir);
     }
 
 }

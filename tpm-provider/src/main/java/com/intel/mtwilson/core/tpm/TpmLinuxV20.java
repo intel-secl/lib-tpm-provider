@@ -31,6 +31,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -59,24 +60,23 @@ class TpmLinuxV20 extends TpmLinux {
         takeOwnership.addArgument("${newEndorsePass}");
         takeOwnership.addArgument("-l");
         takeOwnership.addArgument("${newLockPass}");
-        takeOwnership.addArgument("-X");
         // substitution map to replace the above arguments with ${} escapes
         Map<String, Object> subMap = new HashMap<>();
-        subMap.put("newOwnerPass", TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("newEndorsePass", TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("newLockPass", TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("newOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("newEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("newLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
         takeOwnership.setSubstitutionMap(subMap);
         CommandLineResult result = takeOwnership.execute();
         if (result.getReturnCode() != 0) {
             // change ownership password to a temporary "abcd" by authorizing with the supplied key to see if it works
             TpmTool changeOwnership = new TpmTool(getTpmToolsPath(), ("tpm2_takeownership"));
-            String newOwnerPass = TpmUtils.byteArrayToHexString(TpmUtils.createRandomBytes(20));
+            String newOwnerPass = "hex:" + TpmUtils.byteArrayToHexString(TpmUtils.createRandomBytes(20));
             subMap.put("newOwnerPass", newOwnerPass);
             subMap.put("newEndorsePass", newOwnerPass);
             subMap.put("newLockPass", newOwnerPass);
-            subMap.put("oldOwnerPass", TpmUtils.byteArrayToHexString(ownerAuth));
-            subMap.put("oldEndorsePass", TpmUtils.byteArrayToHexString(ownerAuth));
-            subMap.put("oldLockPass", TpmUtils.byteArrayToHexString(ownerAuth));
+            subMap.put("oldOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+            subMap.put("oldEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+            subMap.put("oldLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
             changeOwnership.setSubstitutionMap(subMap);
             changeOwnership.addArgument("-o");
             changeOwnership.addArgument("${newOwnerPass}");
@@ -90,7 +90,6 @@ class TpmLinuxV20 extends TpmLinux {
             changeOwnership.addArgument("${oldEndorsePass}");
             changeOwnership.addArgument("-L");
             changeOwnership.addArgument("${oldLockPass}");
-            changeOwnership.addArgument("-X");
             result = changeOwnership.execute();
             if (result.getReturnCode() != 0) {
                 // supplied newOwnerAuth is invalid
@@ -102,9 +101,9 @@ class TpmLinuxV20 extends TpmLinux {
                 subMap.put("oldOwnerPass", oldPass);
                 subMap.put("oldEndorsePass", oldPass);
                 subMap.put("oldLockPass", oldPass);
-                subMap.put("newOwnerPass", TpmUtils.byteArrayToHexString(ownerAuth));
-                subMap.put("newEndorsePass", TpmUtils.byteArrayToHexString(ownerAuth));
-                subMap.put("newLockPass", TpmUtils.byteArrayToHexString(ownerAuth));
+                subMap.put("newOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+                subMap.put("newEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+                subMap.put("newLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
                 changeOwnership.setSubstitutionMap(subMap);
                 result = changeOwnership.execute();
                 if (result.getReturnCode() != 0) {
@@ -123,7 +122,7 @@ class TpmLinuxV20 extends TpmLinux {
         HashMap<String, Object> subMap = new HashMap<>();
         File spkContext = Utils.getTempFile("spk", ".context");
         TpmTool createPrimary = new TpmTool(getTpmToolsPath(), ("tpm2_createprimary"));
-        createPrimary.addArgument("-A");
+        createPrimary.addArgument("-H");
         createPrimary.addArgument("o");
         createPrimary.addArgument("-P");
         createPrimary.addArgument("${ownerPass}");
@@ -133,8 +132,7 @@ class TpmLinuxV20 extends TpmLinux {
         createPrimary.addArgument("0x0001"); // RSA
         createPrimary.addArgument("-C");
         createPrimary.addArgument("${spkContext}");
-        createPrimary.addArgument("-X");
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(newOwnerAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(newOwnerAuth));
         subMap.put("spkContext", spkContext);
         createPrimary.setSubstitutionMap(subMap);
         CommandLineResult result = createPrimary.execute();
@@ -142,6 +140,7 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
             throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
         }
+
         TpmTool evictControl = new TpmTool(getTpmToolsPath(), ("tpm2_evictcontrol"));
         evictControl.addArgument("-A");
         evictControl.addArgument("o");
@@ -151,9 +150,8 @@ class TpmLinuxV20 extends TpmLinux {
         evictControl.addArgument("${spkContext}");
         evictControl.addArgument("-S");
         evictControl.addArgument("${spkHandle}");
-        evictControl.addArgument("-X");
         subMap.clear();
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(newOwnerAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(newOwnerAuth));
         subMap.put("spkContext", spkContext);
         subMap.put("spkHandle", "0x81000000");
         evictControl.setSubstitutionMap(subMap);
@@ -270,10 +268,9 @@ class TpmLinuxV20 extends TpmLinux {
         getPubEk.addArgument("0x1");
         getPubEk.addArgument("-f");
         getPubEk.addArgument("${ekFile}");
-        getPubEk.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
-        subMap.put("endorsePass", TpmUtils.byteArrayToHexString(endorsePass));
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("endorsePass", "hex:" + TpmUtils.byteArrayToHexString(endorsePass));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
         subMap.put("ekHandle", String.format("0x%08x", ekHandle));
         subMap.put("ekFile", ekFile);
         getPubEk.setSubstitutionMap(subMap);
@@ -300,7 +297,7 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.clearAkHandle tpm2_listpersistent returned nonzero errro {}", result.getReturnCode());
             throw new Tpm.TpmException("TpmLinuxV20.clearAkHandle tpm2_listpersistent returned nonzero error", result.getReturnCode());
         }
-        if (result.getStandardOut().contains("Persistent handle: 0x81018000")) {
+        if (result.getStandardOut().contains("0x81018000")) {
             TpmTool evictControl = new TpmTool(getTpmToolsPath(), ("tpm2_evictcontrol"));
             evictControl.addArgument("-A");
             evictControl.addArgument("o");
@@ -310,11 +307,10 @@ class TpmLinuxV20 extends TpmLinux {
             evictControl.addArgument("${otherHandle}");
             evictControl.addArgument("-P");
             evictControl.addArgument("${ownerPass}");
-            evictControl.addArgument("-X");
             Map<String, Object> subMap = new HashMap<>();
             subMap.put("aikHandle", "0x81018000");
             subMap.put("otherHandle", "0x81018000");
-            subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
+            subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
             evictControl.setSubstitutionMap(subMap);
             result = evictControl.execute();
             if (result.getReturnCode() != 0) {
@@ -344,7 +340,7 @@ class TpmLinuxV20 extends TpmLinux {
         }
         byte[] ekMod = FileUtils.readFileToByteArray(ekFile);
         ekFile.delete();
-        return Arrays.copyOfRange(ekMod, 102, 256 + 102);
+        return Arrays.copyOfRange(ekMod, 60, 256 + 60);
     }
     
     @Override
@@ -376,11 +372,10 @@ class TpmLinuxV20 extends TpmLinux {
         tool.addArgument("0x000B");
         tool.addArgument("-s");
         tool.addArgument("0x0014");
-        tool.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
-        subMap.put("endorsePass", TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("aikPass", TpmUtils.byteArrayToHexString(keyAuth));
+        subMap.put("endorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("aikPass", "hex:" + TpmUtils.byteArrayToHexString(keyAuth));
         subMap.put("ekHandle", String.format("0x%08x", ekHandle));
         subMap.put("aikHandle", "0x81018000");
         subMap.put("aikFile", aikFile);
@@ -397,7 +392,7 @@ class TpmLinuxV20 extends TpmLinux {
         // For TPM2.0 we can just return the handle instead of the actual blob, and achieve the same effect
         byte[] aikHandle = Utils.intToByteArray(0x81018000);
         byte[] credRequest = FileUtils.readFileToByteArray(aikFile);
-        credRequest = Arrays.copyOfRange(credRequest, 102, 256 + 102);
+        credRequest = Arrays.copyOfRange(credRequest, 26, 256 + 26);
         byte[] aikName = FileUtils.readFileToByteArray(aikNameFile);
         LOG.debug("AIK pub key: {}", TpmUtils.byteArrayToHexString(credRequest));
         LOG.debug("AIK name: {}", TpmUtils.byteArrayToHexString(aikName));
@@ -412,9 +407,14 @@ class TpmLinuxV20 extends TpmLinux {
         int akHandle = findAikHandle();
         int ekHandle = findEkHandle();
         LOG.debug(" AIK Handle : {}", akHandle);
+        LOG.debug(" AIK Handle : {}", String.format("0x%08x", akHandle));
+        LOG.debug(" EK Handle : {}", ekHandle);
+        LOG.debug(" EK Handle : {}", String.format("0x%08x", ekHandle));
         File credentialBlobFile = Utils.getTempFile("mkcredential", "out");
         File decryptedCred = Utils.getTempFile("decrypted", "out");
-        FileUtils.writeByteArrayToFile(credentialBlobFile, TpmUtils.concat(proofRequest.getCredential(), proofRequest.getSecret()));
+
+        FileUtils.writeByteArrayToFile(credentialBlobFile, TpmUtils.concat(TpmUtils.concat(proofRequest.getHeader(),
+                proofRequest.getCredential()), proofRequest.getSecret()));
         TpmTool activateCredential = new TpmTool(getTpmToolsPath(), ("tpm2_activatecredential"));
         activateCredential.addArgument("-e");
         activateCredential.addArgument("${ownerPass}");
@@ -428,10 +428,9 @@ class TpmLinuxV20 extends TpmLinux {
         activateCredential.addArgument("${credentialBlobFile}");
         activateCredential.addArgument("-o");
         activateCredential.addArgument("${decryptedCred}");
-        activateCredential.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("aikAuth", TpmUtils.byteArrayToHexString(keyAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("aikAuth", "hex:" + TpmUtils.byteArrayToHexString(keyAuth));
         subMap.put("akHandle", String.format("0x%08x", akHandle));
         subMap.put("ekHandle", String.format("0x%08x", ekHandle));
         subMap.put("credentialBlobFile", credentialBlobFile);
@@ -464,11 +463,10 @@ class TpmLinuxV20 extends TpmLinux {
         create.addArgument("${encTypeHex}");
         create.addArgument("-A");
         create.addArgument("${attr}");
-        create.addArgument("-o");
+        create.addArgument("-u");
         create.addArgument("${outpub}");
-        create.addArgument("-O");
+        create.addArgument("-r");
         create.addArgument("${outpriv}");
-        create.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
         subMap.put("handle", srkHandle); // SRK handle
         subMap.put("hashTypeHex", Tpm.PcrBank.SHA256.toHex());
@@ -535,10 +533,9 @@ class TpmLinuxV20 extends TpmLinux {
         certify.addArgument("${outSig}");
         certify.addArgument("-C");
         certify.addArgument("${context}");
-        certify.addArgument("-X");
         subMap.clear();
         subMap.put("signingHandle", String.format("0x%08x", findAikHandle()));
-        subMap.put("signingPass", TpmUtils.byteArrayToHexString(aikAuth));
+        subMap.put("signingPass", "hex:" + TpmUtils.byteArrayToHexString(aikAuth));
         subMap.put("hashAlgHex", Tpm.PcrBank.SHA256.toHex());
         subMap.put("outAttest", attestFile);
         subMap.put("outSig", sigFile);
@@ -604,7 +601,7 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public Set<Tpm.PcrBank> getPcrBanks() throws IOException, Tpm.TpmException {
-        TpmTool listPcrs = new TpmTool(getTpmToolsPath(), ("tpm2_listpcrs"));
+        TpmTool listPcrs = new TpmTool(getTpmToolsPath(), ("tpm2_pcrlist"));
         listPcrs.addArgument("-g");
         listPcrs.addArgument("${alg}");
         Map<String, Object> subMap = new HashMap<>();
@@ -688,10 +685,9 @@ class TpmLinuxV20 extends TpmLinux {
         nvDefine.addArgument("${size}");
         nvDefine.addArgument("-t");
         nvDefine.addArgument("${attributes}");
-        nvDefine.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
         subMap.put("index", String.format("0x%08x", index));
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
         subMap.put("size", Integer.toString(size));
         subMap.put("attributes", attr2String(attributes));
         nvDefine.setSubstitutionMap(subMap);
@@ -711,10 +707,9 @@ class TpmLinuxV20 extends TpmLinux {
         nvRelease.addArgument("0x40000001");
         nvRelease.addArgument("-P");
         nvRelease.addArgument("${ownerPass}");
-        nvRelease.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
         subMap.put("index", String.format("0x%08x", index));
-        subMap.put("ownerPass", TpmUtils.byteArrayToHexString(ownerAuth));
+        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
         nvRelease.setSubstitutionMap(subMap);
         CommandLineResult result = nvRelease.execute();
         if (result.getReturnCode() != 0) {
@@ -726,6 +721,7 @@ class TpmLinuxV20 extends TpmLinux {
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
         TpmTool nvRead = new TpmTool(getTpmToolsPath(), ("tpm2_nvread"));
+        File nvFile = Utils.getTempFile("nvRead", "out");
         nvRead.addArgument("-x");
         nvRead.addArgument("${index}");
         nvRead.addArgument("-a");
@@ -734,20 +730,24 @@ class TpmLinuxV20 extends TpmLinux {
         nvRead.addArgument("${authPass}");
         nvRead.addArgument("-s");
         nvRead.addArgument("${size}");
-        nvRead.addArgument("-X");
+        nvRead.addArgument("-f");
+        nvRead.addArgument("${nvFile}");
         Map<String, Object> subMap = new HashMap<>();
         subMap.put("index", String.format("0x%x", index));
         subMap.put("authHandle", String.format("0x%x", index));
-        subMap.put("authPass", TpmUtils.byteArrayToHexString(authPassword));
+        subMap.put("authPass", "hex:" + TpmUtils.byteArrayToHexString(authPassword));
         subMap.put("size", Integer.toString(size));
+        subMap.put("nvFile", nvFile);
         nvRead.setSubstitutionMap(subMap);
         CommandLineResult result = nvRead.execute();
         if (result.getReturnCode() != 0) {
             LOG.debug("TpmModuleV20.nvRead returned nonzero error {}", result.getReturnCode());
             throw new Tpm.TpmException("TpmModule20.nvRead returned nonzero error", result.getReturnCode());
         }
-        String[] lines = result.getStandardOut().split("\n");
-        return TpmUtils.hexStringToByteArray(lines[2].replaceAll(" ", ""));
+
+        byte[] nvData = FileUtils.readFileToByteArray(nvFile);
+        nvFile.delete();
+        return nvData;
     }
 
     @Override
@@ -761,12 +761,10 @@ class TpmLinuxV20 extends TpmLinux {
         nvWrite.addArgument("0x40000001");
         nvWrite.addArgument("-P");
         nvWrite.addArgument("${authPass}");
-        nvWrite.addArgument("-f");
         nvWrite.addArgument("${file}");
-        nvWrite.addArgument("-X");
         Map<String, Object> subMap = new HashMap<>();
         subMap.put("index", String.format("0x%08x", index));
-        subMap.put("authPass", TpmUtils.byteArrayToHexString(authPassword));
+        subMap.put("authPass", "hex:" + TpmUtils.byteArrayToHexString(authPassword));
         subMap.put("file", file);
         nvWrite.setSubstitutionMap(subMap);
         CommandLineResult result = nvWrite.execute();
@@ -799,7 +797,7 @@ class TpmLinuxV20 extends TpmLinux {
         });
         quoteAlgWithPcrs = StringUtils.join(bankList, '+');
         File tempPcrsFile = Utils.getTempFile("pcrs", "tmp");
-        TpmTool pcrList = new TpmTool(getTpmToolsPath(), ("tpm2_listpcrs"));
+        TpmTool pcrList = new TpmTool(getTpmToolsPath(), ("tpm2_pcrlist"));
         pcrList.addArgument("-L");
         pcrList.addArgument("${pcrs}");
         pcrList.addArgument("-o");
@@ -808,13 +806,14 @@ class TpmLinuxV20 extends TpmLinux {
         subMap.put("pcrs", quoteAlgWithPcrs);
         subMap.put("file", tempPcrsFile);
         pcrList.setSubstitutionMap(subMap);
-        // execute tpm2_listpcrs
+        // execute tpm2_pcrlist
         CommandLineResult result = pcrList.execute();
         if (result.getReturnCode() != 0) {
             throw new Tpm.TpmException("TpmLinuxV20.getQuote tpm2_listpcrs failed", result.getReturnCode());
         }
         // now we move to tpm2_quote, create some temporary files to store the output
-        File tempQuoteFile = Utils.getTempFile("quote", "tmp");
+        File tempMessageFile = Utils.getTempFile("quote", "tmp");
+        File tempSigFile = Utils.getTempFile("quote_sig", "tmp");
         int aikHandle = ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt();
         TpmTool tpmQuote = new TpmTool(getTpmToolsPath(), ("tpm2_quote"));
         tpmQuote.addArgument("-k");
@@ -825,26 +824,57 @@ class TpmLinuxV20 extends TpmLinux {
         tpmQuote.addArgument("${quoteAlg}");
         tpmQuote.addArgument("-q");
         tpmQuote.addArgument("${nonce}");
-        tpmQuote.addArgument("-o");
-        tpmQuote.addArgument("${file}");
-        tpmQuote.addArgument("-X");
+        tpmQuote.addArgument("-m");
+        tpmQuote.addArgument("${messageFile}");
+        tpmQuote.addArgument("-s");
+        tpmQuote.addArgument("${sigFile}");
+        tpmQuote.addArgument("-f");
+        tpmQuote.addArgument("${format}");
         subMap = new HashMap<>();
         subMap.put("aikHandle", String.format("0x%08x", aikHandle));
-        subMap.put("aikAuth", TpmUtils.byteArrayToHexString(aikAuth));
+        subMap.put("aikAuth", "hex:" + TpmUtils.byteArrayToHexString(aikAuth));
         subMap.put("quoteAlg", quoteAlgWithPcrs);
         subMap.put("nonce", TpmUtils.byteArrayToHexString(nonce));
-        subMap.put("file", tempQuoteFile);
+        subMap.put("messageFile", tempMessageFile);
+        subMap.put("sigFile", tempSigFile);
+        subMap.put("format", "plain");
         tpmQuote.setSubstitutionMap(subMap);
         result = tpmQuote.execute();
         if (result.getReturnCode() != 0) {
             throw new Tpm.TpmException("TpmLinuxV20.getQuote tpm2_quote failed", result.getReturnCode());
         }
         byte[] pcrsResult = Files.readAllBytes(tempPcrsFile.toPath());
-        byte[] quoteResult = Files.readAllBytes(tempQuoteFile.toPath());
-        byte[] combined = ArrayUtils.addAll(quoteResult, pcrsResult);
+        byte[] messageResult = Files.readAllBytes(tempMessageFile.toPath());
+        byte[] sigResult = Files.readAllBytes(tempSigFile.toPath());
+        int SHORT_BYTES = 2;
+        File sigOFile = Utils.getTempFile("quote_old_sign", "temp");
+        FileUtils.writeByteArrayToFile(sigOFile, sigResult);
+        File msgFile = Utils.getTempFile("quote_msg", "temp");
+        FileUtils.writeByteArrayToFile(msgFile, messageResult);
+
+        sigResult = marshalSig(sigResult);        
+        File sigFile = Utils.getTempFile("quote_sign", "temp");
+        FileUtils.writeByteArrayToFile(sigFile, sigResult);
+
+        ByteBuffer quoteBlob = ByteBuffer.allocate((short)SHORT_BYTES + pcrsResult.length + messageResult.length + sigResult.length);
+        quoteBlob.order(ByteOrder.LITTLE_ENDIAN).putShort((short) messageResult.length);
+        quoteBlob.put(messageResult);
+        quoteBlob.put(sigResult);
+        quoteBlob.put(pcrsResult);
+
+        File ekkPubFile = Utils.getTempFile("all_quote", "temp");
+        FileUtils.writeByteArrayToFile(ekkPubFile, quoteBlob.array());
+        
         tempPcrsFile.delete();
-        tempQuoteFile.delete();
-        return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);
+        tempMessageFile.delete();
+        tempSigFile.delete();
+        return new TpmQuote(System.currentTimeMillis(), pcrBanks, quoteBlob.array());
+    }
+
+    private byte[] marshalSig(byte[] sigResult) {
+        String signHeaderHex = "14000b000001";
+        byte[] signHeaderBytes = TpmUtils.hexStringToByteArray(signHeaderHex);
+        return TpmUtils.concat(signHeaderBytes, sigResult);
     }
 
     @Override
@@ -859,13 +889,14 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.nvIndexSize returned nonzero error {}", result.getReturnCode());
             throw new TpmException("TpmLinuxV20.nvIndexSize returned nonzero error", result.getReturnCode());
         }
-        Pattern p = Pattern.compile("NV Index: 0x[0]{0,7}" + String.format("%x", index) + ".*?The size of the data area\\(dataSize\\):(\\d+)", Pattern.DOTALL);
-        Matcher m = p.matcher(result.getStandardOut());
-        if (m.find()) {
-            String size = m.group(1);
-            return Long.decode(size).intValue();
+        String[] lines = result.getStandardOut().split("\n");
+        for(int i=0; i<lines.length; i++) {
+            if(lines[i].contains(String.format("0x%x", index)) || lines[i].contains(String.format("0x%08x", index))) {
+                String size = lines[i+7].substring(8);
+                return Long.decode(size).intValue();
+            }
         }
-        LOG.debug("TpmLinuxV20.nvIndexSize could not find size of index {}", String.format("0x%08x", index));
+        LOG.debug("TpmLinuxV20.nvIndexSize  could not find size of index {}", String.format("0x%08x", index));
         throw new TpmException("TpmLinuxV20.nvIndexSize could not find size of index " + String.format("0x%08x", index));
     }
 
@@ -878,7 +909,7 @@ class TpmLinuxV20 extends TpmLinux {
     @Override
     public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
         TpmTool tool = new TpmTool(getTpmToolsPath(), "tpm2_takeownership");
-        String auth = TpmUtils.byteArrayToHexString(ownerAuth);
+        String auth = "hex:" + TpmUtils.byteArrayToHexString(ownerAuth);
         tool.addArgument("-o");
         tool.addArgument(auth);
         tool.addArgument("-e");
@@ -891,7 +922,6 @@ class TpmLinuxV20 extends TpmLinux {
         tool.addArgument(auth);
         tool.addArgument("-L");
         tool.addArgument(auth);
-        tool.addArgument("-X");
         CommandLineResult result = tool.execute();
         return result.getReturnCode() == 0;
     }

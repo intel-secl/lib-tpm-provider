@@ -6,11 +6,11 @@ package com.intel.mtwilson.core.tpm;
 
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.Charset;
+
+import java.io.*;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.commons.io.FileUtils;
 
@@ -19,7 +19,6 @@ import org.apache.commons.io.FileUtils;
  * @author dczech
  */
 abstract class TpmLinux extends Tpm {
-
     private final static org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TpmLinux.class);
 
     TpmLinux() {
@@ -74,7 +73,7 @@ abstract class TpmLinux extends Tpm {
     private String tcbMeasurementPath;
 
     /**
-     * Sets the of the Tcb Measurement so it can be easily retrieved with {@link #getTcbMeasurement()
+     * Sets the of the Tcb Measurement so it can be easily retrieved with {@link #getTcbMeasurements()
      * } down the line.
      *
      * @param path
@@ -96,6 +95,5 @@ abstract class TpmLinux extends Tpm {
         } else {
             LOG.debug("TpmLinux.getTcbMeasurement measurement.xml does not exist");
             throw new TpmTcbMeasurementMissingException("TpmLinux.getTcbMeasurement measurement.xml does not exist");
-        }
     }
 }

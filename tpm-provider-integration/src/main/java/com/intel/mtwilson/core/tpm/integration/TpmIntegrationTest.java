@@ -15,6 +15,7 @@ import com.intel.mtwilson.core.tpm.Tpm.NVAttribute;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.*;
 import java.security.cert.X509Certificate;
 import java.util.Set;
 import com.intel.kunit.annotations.*;
@@ -22,8 +23,6 @@ import com.intel.kunit.annotations.Integration.*;
 import gov.niarl.his.privacyca.TpmUtils;
 import java.lang.reflect.Type;
 import java.math.BigInteger;
-import java.security.NoSuchAlgorithmException;
-import java.security.PublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -35,18 +34,29 @@ import com.intel.mtwilson.core.tpm.model.CertifiedKey;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
 import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
+import com.intel.mtwilson.core.privacyca.Tpm2;
+import com.intel.mtwilson.core.privacyca.Tpm2Algorithm;
+import com.intel.mtwilson.core.privacyca.Tpm2Credential;
+import com.intel.mtwilson.core.tpm.util.Utils;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.security.KeyFactory;
-import java.security.Security;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.RSAPublicKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.EnumSet;
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.ShortBufferException;
 import javax.security.auth.x500.X500Principal;
+
+import org.apache.commons.codec.DecoderException;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.io.FileUtils;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
@@ -111,6 +121,7 @@ public class TpmIntegrationTest {
         extractBinary("tpm2_load", dir);
         extractBinary("tpm2_listpcrs", dir);
         extractBinary("tpm2_evictcontrol", dir);
+        extractBinary("tpm2_makecredential", dir);
         extractBinary("tpm2_activatecredential", dir);
         extractBinary("tpm2_create", dir);
         extractBinary("tpm2_certify", dir);
@@ -514,5 +525,59 @@ public class TpmIntegrationTest {
         tpm.setAssetTag(ownerAuth, assetTag);
         byte[] read = tpm.readAssetTag(ownerAuth);
         assertThat(read).isEqualTo(assetTag);
+    }
+
+    @Integration(parameters = NULL_AUTH)
+    public void testNVRAM(byte[] ownerAuth) throws java.security.cert.CertificateException, NoSuchAlgorithmException, KeyStoreException, SignatureException, InvalidKeyException, IOException, InvalidKeySpecException, NoSuchProviderException, UnrecoverableKeyException, CertificateException {
+        X509Certificate ec = getEC();
+        byte[] credentialBlob = ec.getEncoded();
+
+        int part1 = credentialBlob.length/2;
+        int part2 = credentialBlob.length - part1;
+        byte[] part1Buf = Arrays.copyOfRange(credentialBlob, 0, part1);
+        File nvfile1 = Paths.get(System.getProperty("java.io.tmpdir"), "nvwritedata1").toFile();
+        FileUtils.writeByteArrayToFile(nvfile1, part1Buf);
+        byte[] part2Buf = Arrays.copyOfRange(credentialBlob, part1, credentialBlob.length);
+        File nvfile2 = Paths.get(System.getProperty("java.io.tmpdir"), "nvwritedata2").toFile();
+        FileUtils.writeByteArrayToFile(nvfile2, part2Buf);
+
+        System.out.println("\n\n Execute following commands to store EC blob to NVRAM ");
+        System.out.println("tpm2_nvdefine -x 0x01c00000 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f -s " + part1 + " -t 0x00060002");
+        System.out.println("tpm2_nvwrite -x 0x01c00000 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f /tmp/nvwritedata1");
+        System.out.println("tpm2_nvdefine -x 0x01c00001 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f -s " + part2 + " -t 0x00060002");
+        System.out.println("tpm2_nvwrite -x 0x01c00001 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f /tmp/nvwritedata2");
+        System.out.println("\n\n Validate NVRAM using");
+        System.out.println("tpm2_nvlist");
+        System.out.println("tpm2_nvread -x 0x1c00000 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f -s " + part1 + " > /tmp/endorsementCert");
+        System.out.println("tpm2_nvread -x 0x1c00001 -a 0x40000001 -P hex:c758af994ac60743fdf1ad5d8186ca216657f99f -s " + part2 + " >> /tmp/endorsementCert");
+    }
+
+    @Integration(parameters = NULL_AUTH)
+        public void testPCA(byte[] ownerAuth) throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException, ShortBufferException, java.security.cert.CertificateException, CertificateException {
+        byte[] key = TpmUtils.createRandomBytes(16);
+        File aikNameFile = new File("/tmp/aikName");
+        byte[] aikName = FileUtils.readFileToByteArray(aikNameFile);
+
+        File ecFile = new File("/tmp/endorsementCert");
+        byte[] ecTpm = FileUtils.readFileToByteArray(ecFile);
+        X509Certificate ec = TpmUtils.certFromBytes(ecTpm);
+
+        Tpm2Credential credential = Tpm2.makeCredential((RSAPublicKey) ec.getPublicKey(), Tpm2Algorithm.Symmetric.AES, 128, Tpm2Algorithm.Hash.SHA256, key, aikName);
+        File credentialBlobFile = Paths.get(System.getProperty("java.io.tmpdir"), "mkcredential").toFile();
+
+        FileUtils.writeByteArrayToFile(credentialBlobFile, TpmUtils.concat(credential.getCredential(), credential.getSecret()));
+        System.out.println("\n\n Activate credentials using, ");
+        System.out.println("tpm2_activatecredential -e hex:c758af994ac60743fdf1ad5d8186ca216657f99f -P hex:ddd53ab829644ef5e9432bd1132dbe4267f0ef1a -H 0x81018000 -k 0x81010000 -f /tmp/mkcredential -o /tmp/decrypted.out");
+    }
+
+    private X509Certificate getEC() throws NoSuchAlgorithmException, java.security.cert.CertificateException, SignatureException, NoSuchProviderException, InvalidKeyException, InvalidKeySpecException, UnrecoverableKeyException, CertificateException, KeyStoreException, IOException {
+        File ekFile = new File("/tmp/endorsementkeyecpub");
+        byte[] publicBytes = FileUtils.readFileToByteArray(ekFile);
+        byte[] ekMod = Arrays.copyOfRange(publicBytes, 102, 256 + 102);
+
+        TpmUtils.createCaP12(2048, "Endorsement", "password", "endorsement.p12", 1);
+        X509Certificate endorsementCaCert = TpmUtils.certFromP12("endorsement.p12", "password");
+        RSAPrivateKey endorsementPrivKey = TpmUtils.privKeyFromP12("endorsement.p12", "password");
+        return TpmUtils.makeEkCert(ekMod, endorsementPrivKey, endorsementCaCert, 2);
     }
 }
