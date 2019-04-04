@@ -97,3 +97,4 @@ abstract class TpmLinux extends Tpm {
             throw new TpmTcbMeasurementMissingException("TpmLinux.getTcbMeasurement measurement.xml does not exist");
     }
 }
+}
