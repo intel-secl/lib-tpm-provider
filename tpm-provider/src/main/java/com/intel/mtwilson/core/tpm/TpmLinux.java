@@ -88,13 +88,8 @@ abstract class TpmLinux extends Tpm {
      * @throws TpmException
      */
     @Override
-    public String getTcbMeasurement() throws IOException, TpmException {
-        File tcbMeasurementFile = Paths.get("/opt", "trustagent", "var", "measureLog.xml").toFile();
-        if (tcbMeasurementFile.exists()) {
-            return FileUtils.readFileToString(tcbMeasurementFile, Charset.forName("UTF-8"));
-        } else {
-            LOG.debug("TpmLinux.getTcbMeasurement measurement.xml does not exist");
-            throw new TpmTcbMeasurementMissingException("TpmLinux.getTcbMeasurement measurement.xml does not exist");
+    public List<String> getTcbMeasurements() throws TpmException {
+        File tcbMeasurementsDir = Paths.get("/opt", "trustagent", "var", "ramfs").toFile();
+        return getTcbMeasurements(tcbMeasurementsDir);
     }
-}
 }
