@@ -198,6 +198,12 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-exec</artifactId>
         </dependency>
+        <!-- https://mvnrepository.com/artifact/com.github.microsoft/TSS.Java -->
+        <dependency>
+            <groupId>com.github.microsoft</groupId>
+            <artifactId>TSS.Java</artifactId>
+            <version>0.3.0</version>
+        </dependency>
     </dependencies>
     <profiles>
         <profile>
