@@ -35,6 +35,11 @@ import java.util.stream.Collectors;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import tss.Helpers;
+import tss.TpmDeviceBase;
+import tss.TpmDeviceLinux;
+import tss.TpmException;
+import tss.tpm.*;
 
 /**
  *
@@ -44,12 +49,17 @@ class TpmLinuxV20 extends TpmLinux {
 
     private final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TpmLinuxV20.class);
 
+    tss.Tpm tpmNew;
+
     TpmLinuxV20() {
         super();
     }
 
     TpmLinuxV20(String tpmToolsPath) {
         super(tpmToolsPath);
+        TpmDeviceBase base = new TpmDeviceLinux();
+        tpmNew = new tss.Tpm();
+        tpmNew._setDevice(base);
     }
 
     private void changeAuth(byte[] ownerAuth) throws IOException, TpmException {
@@ -674,104 +684,40 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws IOException, Tpm.TpmException {
-        TpmTool nvDefine = new TpmTool(getTpmToolsPath(), ("tpm2_nvdefine"));
-        nvDefine.addArgument("-x");
-        nvDefine.addArgument("${index}");
-        nvDefine.addArgument("-a");
-        nvDefine.addArgument("0x40000001");
-        nvDefine.addArgument("-P");
-        nvDefine.addArgument("${ownerPass}");
-        nvDefine.addArgument("-s");
-        nvDefine.addArgument("${size}");
-        nvDefine.addArgument("-t");
-        nvDefine.addArgument("${attributes}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("index", String.format("0x%08x", index));
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("size", Integer.toString(size));
-        subMap.put("attributes", attr2String(attributes));
-        nvDefine.setSubstitutionMap(subMap);
-        CommandLineResult result = nvDefine.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.nvDefine returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.nvDefine returned nonzero error", result.getReturnCode());
+        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        TPM_ALG_ID algorithm = TPM_ALG_ID.SHA256;
+        TPMA_NV nvAttributes = new TPMA_NV(TPMA_NV.AUTHWRITE, TPMA_NV.AUTHREAD);
+        //TODO: Should work with - TPMA_NV.AUTHREAD, TPMA_NV.OWNERWRITE, TPMA_NV.OWNERREAD
+        byte[] authPolicy = new byte[0];
+        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvIndex, algorithm, nvAttributes, authPolicy, size);
+        try {
+            tpmNew.NV_DefineSpace(tpmNew._OwnerHandle, ownerAuth, nvPub);
+        } catch (tss.TpmException e) {
+            if (!e.getMessage().contains("succeeded")) {
+                LOG.debug("TpmLinuxV20.nvDefine returned error {}", e.getMessage());
+                throw new Tpm.TpmException("TpmLinuxV20.nvDefine returned error", e);
+            }
         }
     }
 
     @Override
     public void nvRelease(byte[] ownerAuth, int index) throws IOException, Tpm.TpmException {
-        TpmTool nvRelease = new TpmTool(getTpmToolsPath(), ("tpm2_nvrelease"));
-        nvRelease.addArgument("-x");
-        nvRelease.addArgument("${index}");
-        nvRelease.addArgument("-a");
-        nvRelease.addArgument("0x40000001");
-        nvRelease.addArgument("-P");
-        nvRelease.addArgument("${ownerPass}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("index", String.format("0x%08x", index));
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        nvRelease.setSubstitutionMap(subMap);
-        CommandLineResult result = nvRelease.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.nvRelease returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.nvRelease returned nonzero error", result.getReturnCode());
-        }
+        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        tpmNew._allowErrors().NV_UndefineSpace(tpmNew._OwnerHandle, nvIndex);
     }
 
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
-        TpmTool nvRead = new TpmTool(getTpmToolsPath(), ("tpm2_nvread"));
-        File nvFile = Utils.getTempFile("nvRead", "out");
-        nvRead.addArgument("-x");
-        nvRead.addArgument("${index}");
-        nvRead.addArgument("-a");
-        nvRead.addArgument("0x40000001");
-        nvRead.addArgument("-P");
-        nvRead.addArgument("${authPass}");
-        nvRead.addArgument("-s");
-        nvRead.addArgument("${size}");
-        nvRead.addArgument("-f");
-        nvRead.addArgument("${nvFile}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("index", String.format("0x%x", index));
-        subMap.put("authHandle", String.format("0x%x", index));
-        subMap.put("authPass", "hex:" + TpmUtils.byteArrayToHexString(authPassword));
-        subMap.put("size", Integer.toString(size));
-        subMap.put("nvFile", nvFile);
-        nvRead.setSubstitutionMap(subMap);
-        CommandLineResult result = nvRead.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmModuleV20.nvRead returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmModule20.nvRead returned nonzero error", result.getReturnCode());
-        }
-
-        byte[] nvData = FileUtils.readFileToByteArray(nvFile);
-        nvFile.delete();
-        return nvData;
+        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        nvIndex.AuthValue = authPassword;
+        return tpmNew.NV_Read(nvIndex, nvIndex,  size,  0);
     }
 
     @Override
     public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, Tpm.TpmException {
-        File file = Utils.getTempFile("nvwrite", "data");
-        FileUtils.writeByteArrayToFile(file, data);
-        TpmTool nvWrite = new TpmTool(getTpmToolsPath(), ("tpm2_nvwrite"));
-        nvWrite.addArgument("-x");
-        nvWrite.addArgument("${index}");
-        nvWrite.addArgument("-a");
-        nvWrite.addArgument("0x40000001");
-        nvWrite.addArgument("-P");
-        nvWrite.addArgument("${authPass}");
-        nvWrite.addArgument("${file}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("index", String.format("0x%08x", index));
-        subMap.put("authPass", "hex:" + TpmUtils.byteArrayToHexString(authPassword));
-        subMap.put("file", file);
-        nvWrite.setSubstitutionMap(subMap);
-        CommandLineResult result = nvWrite.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.nvWrite returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.nvWrite returned nonzero error", result.getReturnCode());
-        }
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
+        nvHandle.AuthValue = authPassword;
+        tpmNew.NV_Write(nvHandle, nvHandle, data,  0);
     }
 
     @Override
