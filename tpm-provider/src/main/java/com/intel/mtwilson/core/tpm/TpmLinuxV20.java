@@ -8,6 +8,7 @@ import com.intel.mtwilson.core.tpm.model.CertifiedKey;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
+import com.intel.mtwilson.core.tpm.util.NvAttributeMapper;
 import com.intel.mtwilson.core.tpm.util.Utils;
 import com.intel.mtwilson.core.tpm.util.Utils.SymCaDecryptionException;
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
@@ -35,10 +36,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
-import tss.Helpers;
 import tss.TpmDeviceBase;
 import tss.TpmDeviceLinux;
-import tss.TpmException;
 import tss.tpm.*;
 
 /**
@@ -684,12 +683,12 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws IOException, Tpm.TpmException {
-        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         TPM_ALG_ID algorithm = TPM_ALG_ID.SHA256;
-        TPMA_NV nvAttributes = new TPMA_NV(TPMA_NV.AUTHWRITE, TPMA_NV.AUTHREAD);
-        //TODO: Should work with - TPMA_NV.AUTHREAD, TPMA_NV.OWNERWRITE, TPMA_NV.OWNERREAD
+        //TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
+        TPMA_NV nvAttributes = new TPMA_NV(TPMA_NV.AUTHREAD, TPMA_NV.AUTHWRITE);
         byte[] authPolicy = new byte[0];
-        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvIndex, algorithm, nvAttributes, authPolicy, size);
+        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, algorithm, nvAttributes, authPolicy, size);
         try {
             tpmNew.NV_DefineSpace(tpmNew._OwnerHandle, ownerAuth, nvPub);
         } catch (tss.TpmException e) {
@@ -699,6 +698,15 @@ class TpmLinuxV20 extends TpmLinux {
             }
         }
     }
+
+    private TPMA_NV getTpmaNvFromAttributes(Set<NVAttribute> attributes) {
+        List<TPMA_NV> nvAttributeList = new ArrayList<>();
+        for(NVAttribute attr : attributes) {
+            nvAttributeList.add(NvAttributeMapper.getMappedNvAttribute(attr));
+        }
+        return new TPMA_NV(nvAttributeList.toArray(new TPMA_NV[nvAttributeList.size()]));
+    }
+
 
     @Override
     public void nvRelease(byte[] ownerAuth, int index) throws IOException, Tpm.TpmException {
@@ -722,13 +730,19 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public boolean nvIndexExists(int index) throws IOException, Tpm.TpmException {
-        TpmTool nvList = new TpmTool(getTpmToolsPath(), ("tpm2_nvlist"));
-        CommandLineResult result = nvList.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.nvIndexExists tpm2_nvlist returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.nvIndexExists tpm2_nvlist returned nonzero error", result.getReturnCode());
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
+        NV_ReadPublicResponse nvPub;
+        try {
+            nvPub = tpmNew.NV_ReadPublic(nvHandle);
+        } catch (tss.TpmException e) {
+            if(e.getMessage().contains("HANDLE")) {
+                return false;
+            } else {
+                LOG.debug("TpmLinuxV20.nvIndexExists could not find NV index {}", String.format("0x%08x", index));
+                throw new TpmException("TpmLinuxV20.nvIndexExists could not find NV index " + String.format("0x%08x", index));
+            }
         }
-        return result.getStandardOut().contains(String.format("0x%x", index)) || result.getStandardOut().contains(String.format("0x%08x", index));
+        return index == nvPub.nvPublic.nvIndex.handle;
     }
 
     @Override
@@ -829,21 +843,15 @@ class TpmLinuxV20 extends TpmLinux {
     }
 
     private int nvIndexSize(int index) throws IOException, Tpm.TpmException {
-        TpmTool nvList = new TpmTool(getTpmToolsPath(), "tpm2_nvlist");
-        CommandLineResult result = nvList.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.nvIndexSize returned nonzero error {}", result.getReturnCode());
-            throw new TpmException("TpmLinuxV20.nvIndexSize returned nonzero error", result.getReturnCode());
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
+        NV_ReadPublicResponse nvPub;
+        try {
+            nvPub = tpmNew.NV_ReadPublic(nvHandle);
+        } catch (Exception e) {
+            LOG.debug("TpmLinuxV20.nvIndexSize could not find size of index {}", String.format("0x%08x", index));
+            throw new TpmException("TpmLinuxV20.nvIndexSize could not find size of index " + String.format("0x%08x", index));
         }
-        String[] lines = result.getStandardOut().split("\n");
-        for(int i=0; i<lines.length; i++) {
-            if(lines[i].contains(String.format("0x%x", index)) || lines[i].contains(String.format("0x%08x", index))) {
-                String size = lines[i+7].substring(8);
-                return Long.decode(size).intValue();
-            }
-        }
-        LOG.debug("TpmLinuxV20.nvIndexSize  could not find size of index {}", String.format("0x%08x", index));
-        throw new TpmException("TpmLinuxV20.nvIndexSize could not find size of index " + String.format("0x%08x", index));
+        return nvPub.nvPublic.dataSize;
     }
 
     /**
