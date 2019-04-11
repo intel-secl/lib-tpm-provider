@@ -62,114 +62,27 @@ class TpmLinuxV20 extends TpmLinux {
     }
 
     private void changeAuth(byte[] ownerAuth) throws IOException, TpmException {
-        TpmTool takeOwnership = new TpmTool(getTpmToolsPath(), "tpm2_takeownership");
-        takeOwnership.addArgument("-o");
-        takeOwnership.addArgument("${newOwnerPass}");
-        takeOwnership.addArgument("-e");
-        takeOwnership.addArgument("${newEndorsePass}");
-        takeOwnership.addArgument("-l");
-        takeOwnership.addArgument("${newLockPass}");
-        // substitution map to replace the above arguments with ${} escapes
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("newOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("newEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("newLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        takeOwnership.setSubstitutionMap(subMap);
-        CommandLineResult result = takeOwnership.execute();
-        if (result.getReturnCode() != 0) {
-            // change ownership password to a temporary "abcd" by authorizing with the supplied key to see if it works
-            TpmTool changeOwnership = new TpmTool(getTpmToolsPath(), ("tpm2_takeownership"));
-            String newOwnerPass = "hex:" + TpmUtils.byteArrayToHexString(TpmUtils.createRandomBytes(20));
-            subMap.put("newOwnerPass", newOwnerPass);
-            subMap.put("newEndorsePass", newOwnerPass);
-            subMap.put("newLockPass", newOwnerPass);
-            subMap.put("oldOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-            subMap.put("oldEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-            subMap.put("oldLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-            changeOwnership.setSubstitutionMap(subMap);
-            changeOwnership.addArgument("-o");
-            changeOwnership.addArgument("${newOwnerPass}");
-            changeOwnership.addArgument("-e");
-            changeOwnership.addArgument("${newEndorsePass}");
-            changeOwnership.addArgument("-l");
-            changeOwnership.addArgument("${newLockPass}");
-            changeOwnership.addArgument("-O");
-            changeOwnership.addArgument("${oldOwnerPass}");
-            changeOwnership.addArgument("-E");
-            changeOwnership.addArgument("${oldEndorsePass}");
-            changeOwnership.addArgument("-L");
-            changeOwnership.addArgument("${oldLockPass}");
-            result = changeOwnership.execute();
-            if (result.getReturnCode() != 0) {
-                // supplied newOwnerAuth is invalid
-                LOG.debug("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
-                throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password", result.getReturnCode());
-            } else {
-                // supplied newOwnerAuth is valid, so change TPM owner pass back from the temporary and do it again
-                Object oldPass = subMap.get("newOwnerPass");
-                subMap.put("oldOwnerPass", oldPass);
-                subMap.put("oldEndorsePass", oldPass);
-                subMap.put("oldLockPass", oldPass);
-                subMap.put("newOwnerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-                subMap.put("newEndorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-                subMap.put("newLockPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-                changeOwnership.setSubstitutionMap(subMap);
-                result = changeOwnership.execute();
-                if (result.getReturnCode() != 0) {
-                    LOG.debug("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
-                    throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: "
-                            + "Could not change TPM password back from temporary. TPM must be reset from bios");
-                }
-            }
-        }
+        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.OWNER), ownerAuth);
+        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.ENDORSEMENT), ownerAuth);
+        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.LOCKOUT), ownerAuth);
     }
 
     @Override
     public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
-        // basically do what tpm2-isowner.sh did, take ownership and see if we can change it and revert it from a temporary
         changeAuth(newOwnerAuth);
-        HashMap<String, Object> subMap = new HashMap<>();
-        File spkContext = Utils.getTempFile("spk", ".context");
-        TpmTool createPrimary = new TpmTool(getTpmToolsPath(), ("tpm2_createprimary"));
-        createPrimary.addArgument("-H");
-        createPrimary.addArgument("o");
-        createPrimary.addArgument("-P");
-        createPrimary.addArgument("${ownerPass}");
-        createPrimary.addArgument("-g");
-        createPrimary.addArgument("0x000B"); // SHA256
-        createPrimary.addArgument("-G");
-        createPrimary.addArgument("0x0001"); // RSA
-        createPrimary.addArgument("-C");
-        createPrimary.addArgument("${spkContext}");
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(newOwnerAuth));
-        subMap.put("spkContext", spkContext);
-        createPrimary.setSubstitutionMap(subMap);
-        CommandLineResult result = createPrimary.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
-        }
+        TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
+                new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.decrypt,
+                        TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
+                new byte[0],
+                new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
+                        new TPMS_NULL_ASYM_SCHEME(),2048,0),
+                new TPM2B_PUBLIC_KEY_RSA());
+        CreatePrimaryResponse response = tpmNew.CreatePrimary(TPM_HANDLE.from(TPM_RH.OWNER),
+                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
 
-        TpmTool evictControl = new TpmTool(getTpmToolsPath(), ("tpm2_evictcontrol"));
-        evictControl.addArgument("-A");
-        evictControl.addArgument("o");
-        evictControl.addArgument("-P");
-        evictControl.addArgument("${ownerPass}");
-        evictControl.addArgument("-c");
-        evictControl.addArgument("${spkContext}");
-        evictControl.addArgument("-S");
-        evictControl.addArgument("${spkHandle}");
-        subMap.clear();
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(newOwnerAuth));
-        subMap.put("spkContext", spkContext);
-        subMap.put("spkHandle", "0x81000000");
-        evictControl.setSubstitutionMap(subMap);
-        result = evictControl.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-        }
-        spkContext.delete();
+        byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
+        tpmNew.EvictControl(TPM_HANDLE.from(TPM_RH.OWNER), response.handle,
+                TPM_HANDLE.fromTpm(persistent));
     }
 
     @Override
