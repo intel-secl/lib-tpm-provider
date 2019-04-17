@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 public class PcrBanksMapper {
-    public static List<TPM_ALG_ID> getSupportedPcrBanks(Set<Tpm.PcrBank> pcrBanks) {
+    public static List<TPM_ALG_ID> getMappedPcrBanks(Set<Tpm.PcrBank> pcrBanks) {
         List<TPM_ALG_ID> supportedBanks = new ArrayList<>();
         for(Tpm.PcrBank pb: pcrBanks) {
             switch(pb) {

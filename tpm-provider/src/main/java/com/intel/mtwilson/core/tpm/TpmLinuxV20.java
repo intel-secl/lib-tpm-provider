@@ -15,11 +15,14 @@ import com.intel.mtwilson.core.tpm.util.Utils.SymCaDecryptionException;
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
 import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
 import gov.niarl.his.privacyca.TpmUtils;
+
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.util.ArrayList;
@@ -31,8 +34,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import tss.TpmDeviceBase;
 import tss.TpmDeviceLinux;
 import tss.tpm.*;
@@ -520,24 +526,22 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public Set<Tpm.PcrBank> getPcrBanks() throws IOException, Tpm.TpmException {
-        TpmTool listPcrs = new TpmTool(getTpmToolsPath(), ("tpm2_pcrlist"));
-        listPcrs.addArgument("-g");
-        listPcrs.addArgument("${alg}");
-        Map<String, Object> subMap = new HashMap<>();
-        Set<Tpm.PcrBank> pcrBanks = EnumSet.noneOf(Tpm.PcrBank.class);
-        for (Tpm.PcrBank bank : Tpm.PcrBank.values()) {
-            subMap.put("alg", bank.toHex());
-            listPcrs.setSubstitutionMap(subMap);
-            CommandLineResult result = listPcrs.execute();
-            if (result.getReturnCode() == 0) {
-                pcrBanks.add(bank);
+        GetCapabilityResponse caps = tpmNew.GetCapability(TPM_CAP.ALGS, 0, TPM_ALG_ID.values().size());
+        TPML_ALG_PROPERTY algs = (TPML_ALG_PROPERTY) (caps.capabilityData);
+        Set<Tpm.PcrBank> pcrBanks = EnumSet.allOf(Tpm.PcrBank.class);
+        Set<Tpm.PcrBank> supportedPcrBanks = EnumSet.noneOf(Tpm.PcrBank.class);
+        for(Tpm.PcrBank bank : pcrBanks) {
+            for (TPMS_ALG_PROPERTY p : algs.algProperties) {
+                if(p.alg.name().equalsIgnoreCase(bank.name())) {
+                    supportedPcrBanks.add(bank);
+                }
             }
         }
-        if (pcrBanks.isEmpty()) {
+        if (supportedPcrBanks.isEmpty()) {
             LOG.debug("TpmLinuxV20.getPcrBanks failed to retrieve list of PCR banks");
             throw new Tpm.TpmException("TpmLinuxV20.getPcrBanks failed to retrieve list of PCR Banks");
         }
-        return pcrBanks;
+        return supportedPcrBanks;
     }
 
     @Override
@@ -615,24 +619,13 @@ class TpmLinuxV20 extends TpmLinux {
     @Override
     public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikBlob, byte[] aikAuth, byte[] nonce)
             throws IOException, Tpm.TpmException {
+        byte[] pcrsResult = getPcrs(pcrBanks, pcrs);
+        System.out.println("Pcr List from code - " + TpmUtils.byteArrayToHexString(pcrsResult));
 
-        int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
-
-        List<TPM_ALG_ID> supportedBanks = PcrBanksMapper.getSupportedPcrBanks(pcrBanks);
-        List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
-        for(TPM_ALG_ID alg : supportedBanks) {
-            selectedPcrs.add(new TPMS_PCR_SELECTION(alg, pcrLists));
-            break;
-        }
-
-        TPMS_PCR_SELECTION[] pcrToQuote = selectedPcrs.toArray(new TPMS_PCR_SELECTION[selectedPcrs.size()]);
-
-        PCR_ReadResponse pcrsNew = tpmNew.PCR_Read(pcrToQuote);
+        TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
         TPM_HANDLE handle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
-
         handle.AuthValue = aikAuth;
-
-        QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), pcrToQuote);
+        QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
         System.out.println("--------------- Quote ------------ \n  " +  quote.toString());
 
         // Validate the quote using tss.Java support functions
@@ -642,8 +635,8 @@ class TpmLinuxV20 extends TpmLinux {
         boolean signOk = aikPub.outPublic.validateSignature(nonce, new TPMS_NULL_SIG_SCHEME());
         System.out.println("Sign validated:" + signOk);
 
-        boolean quoteOk = aikPub.outPublic.validateQuote(pcrsNew, nonce, quote);
-        System.out.println("Quote validated:" + quoteOk);
+        //boolean quoteOk = aikPub.outPublic.validateQuote(pcrsNew, nonce, quote);
+        //System.out.println("Quote validated:" + quoteOk);
         /*
         // first convert the Java arguments into string form to pass into tpm2_listpcrs and then tpm2_quote
         String quoteAlgWithPcrs;
@@ -724,7 +717,48 @@ class TpmLinuxV20 extends TpmLinux {
         
         tempPcrsFile.delete();
         tempQuoteFile.delete();*/
-        return new TpmQuote(System.currentTimeMillis(), pcrBanks, quote.toTpm());
+        byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
+        return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);
+    }
+
+    // As 'PCR_Read' does not result more than 8 PCR values, we need to read them in chunks
+    private byte[] getPcrs(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) throws IOException {
+        ByteArrayOutputStream pcrStream = new ByteArrayOutputStream();
+        for(TPMS_PCR_SELECTION pcrSelection: getTpmsPcrSelections(pcrBanks, pcrs)) {
+            PCR_ReadResponse pcrsNew = tpmNew.PCR_Read(new TPMS_PCR_SELECTION[]{pcrSelection});
+            for(TPM2B_DIGEST digest : pcrsNew.pcrValues) {
+                pcrStream.write(digest.buffer);
+            }
+        }
+        return pcrStream.toByteArray();
+    }
+
+    private TPMS_PCR_SELECTION[] getTpmsPcrToQuoteSelections(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) {
+        int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
+        List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
+        for(TPM_ALG_ID alg : PcrBanksMapper.getMappedPcrBanks(pcrBanks)) {
+            selectedPcrs.add(new TPMS_PCR_SELECTION(alg, pcrLists));
+        }
+        return selectedPcrs.toArray(new TPMS_PCR_SELECTION[selectedPcrs.size()]);
+    }
+
+    private TPMS_PCR_SELECTION[] getTpmsPcrSelections(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) {
+        int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
+        List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
+        for(TPM_ALG_ID alg : PcrBanksMapper.getMappedPcrBanks(pcrBanks)) {
+            if(pcrLists.length < 8) {
+                selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 0, pcrLists.length)));
+            } else {
+                if (pcrLists.length > 8) {
+                    selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 0, 8)));
+                }
+                if (pcrLists.length > 16) {
+                    selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 8, 16)));
+                    selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 16, pcrLists.length)));
+                }
+            }
+        }
+        return selectedPcrs.toArray(new TPMS_PCR_SELECTION[selectedPcrs.size()]);
     }
 
     @Override
