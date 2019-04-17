@@ -9,6 +9,7 @@ import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
 import com.intel.mtwilson.core.tpm.util.NvAttributeMapper;
+import com.intel.mtwilson.core.tpm.util.PcrBanksMapper;
 import com.intel.mtwilson.core.tpm.util.Utils;
 import com.intel.mtwilson.core.tpm.util.Utils.SymCaDecryptionException;
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
@@ -19,7 +20,6 @@ import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Files;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.util.ArrayList;
@@ -31,11 +31,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.StringUtils;
 import tss.TpmDeviceBase;
 import tss.TpmDeviceLinux;
 import tss.tpm.*;
@@ -543,67 +540,18 @@ class TpmLinuxV20 extends TpmLinux {
         return pcrBanks;
     }
 
-    private String attr2String(Set<NVAttribute> attributes) {
-        // we shouldn't assign int values to NVAttribute because they may differ per TPM version
-        long bits = 0;
-        for (NVAttribute attr : attributes) {
-            switch (attr) {
-                case PPWRITE:
-                    bits |= 1;
-                    break;
-                case OWNERWRITE:
-                    bits |= (1 << 1);
-                    break;
-                case AUTHWRITE:
-                    bits |= (1 << 2);
-                    break;
-                case WRITEALL:
-                    bits |= (1 << 12);
-                    break;
-                case WRITEDEFINE:
-                    bits |= (1 << 13);
-                    break;
-                case WRITE_STCLEAR:
-                    bits |= (1 << 14);
-                    break;
-                case GLOBALLOCK:
-                    bits |= (1 << 15);
-                    break;
-                case PPREAD:
-                    bits |= (1 << 16);
-                    break;
-                case OWNERREAD:
-                    bits |= (1 << 17);
-                    break;
-                case AUTHREAD:
-                    bits |= (1 << 18);
-                    break;
-                case POLICYREAD:
-                    bits |= (1 << 19);
-                    break;
-                case PLATFORMCREATE:
-                    bits |= (1 << 30);
-                    break;
-                case READ_STCLEAR:
-                    bits |= (1 << 31);
-                    break;
-                default:
-                    throw new UnsupportedOperationException("TpmLinux.nvAttributes unknown attribute " + attr);
-            }
-        }
-        return String.format("0x%08x", bits);
-    }
-
     @Override
     public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws IOException, Tpm.TpmException {
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
+        nvHandle.AuthValue = indexPassword;
         TPM_ALG_ID algorithm = TPM_ALG_ID.SHA256;
-        //TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
-        TPMA_NV nvAttributes = new TPMA_NV(TPMA_NV.AUTHREAD, TPMA_NV.AUTHWRITE);
+        TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
         byte[] authPolicy = new byte[0];
         TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, algorithm, nvAttributes, authPolicy, size);
         try {
-            tpmNew.NV_DefineSpace(tpmNew._OwnerHandle, ownerAuth, nvPub);
+            tpmNew.NV_DefineSpace(ownerHandle, ownerAuth, nvPub);
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("succeeded")) {
                 LOG.debug("TpmLinuxV20.nvDefine returned error {}", e.getMessage());
@@ -623,22 +571,28 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public void nvRelease(byte[] ownerAuth, int index) throws IOException, Tpm.TpmException {
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        tpmNew._allowErrors().NV_UndefineSpace(tpmNew._OwnerHandle, nvIndex);
+        tpmNew._allowErrors().NV_UndefineSpace(ownerHandle, nvIndex);
     }
 
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
         nvIndex.AuthValue = authPassword;
-        return tpmNew.NV_Read(nvIndex, nvIndex,  size,  0);
+        return tpmNew.NV_Read(ownerHandle, nvIndex,  size,  0);
     }
 
     @Override
     public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, Tpm.TpmException {
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         nvHandle.AuthValue = authPassword;
-        tpmNew.NV_Write(nvHandle, nvHandle, data,  0);
+        tpmNew.NV_Write(ownerHandle, nvHandle, data,  0);
     }
 
     @Override
@@ -661,6 +615,36 @@ class TpmLinuxV20 extends TpmLinux {
     @Override
     public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikBlob, byte[] aikAuth, byte[] nonce)
             throws IOException, Tpm.TpmException {
+
+        int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
+
+        List<TPM_ALG_ID> supportedBanks = PcrBanksMapper.getSupportedPcrBanks(pcrBanks);
+        List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
+        for(TPM_ALG_ID alg : supportedBanks) {
+            selectedPcrs.add(new TPMS_PCR_SELECTION(alg, pcrLists));
+            break;
+        }
+
+        TPMS_PCR_SELECTION[] pcrToQuote = selectedPcrs.toArray(new TPMS_PCR_SELECTION[selectedPcrs.size()]);
+
+        PCR_ReadResponse pcrsNew = tpmNew.PCR_Read(pcrToQuote);
+        TPM_HANDLE handle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
+
+        handle.AuthValue = aikAuth;
+
+        QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), pcrToQuote);
+        System.out.println("--------------- Quote ------------ \n  " +  quote.toString());
+
+        // Validate the quote using tss.Java support functions
+        TPM_HANDLE ekhandle = new TPM_HANDLE(findEkHandle());
+        ekhandle.AuthValue = aikAuth;
+        ReadPublicResponse aikPub = tpmNew.ReadPublic(ekhandle);
+        boolean signOk = aikPub.outPublic.validateSignature(nonce, new TPMS_NULL_SIG_SCHEME());
+        System.out.println("Sign validated:" + signOk);
+
+        boolean quoteOk = aikPub.outPublic.validateQuote(pcrsNew, nonce, quote);
+        System.out.println("Quote validated:" + quoteOk);
+        /*
         // first convert the Java arguments into string form to pass into tpm2_listpcrs and then tpm2_quote
         String quoteAlgWithPcrs;
         List<String> bankList = new ArrayList<>();
@@ -739,15 +723,8 @@ class TpmLinuxV20 extends TpmLinux {
         FileUtils.writeByteArrayToFile(ekkPubFile, quoteBlob.array());
         
         tempPcrsFile.delete();
-        tempMessageFile.delete();
-        tempSigFile.delete();
-        return new TpmQuote(System.currentTimeMillis(), pcrBanks, quoteBlob.array());
-    }
-
-    private byte[] marshalSig(byte[] sigResult) {
-        String signHeaderHex = "14000b000001";
-        byte[] signHeaderBytes = TpmUtils.hexStringToByteArray(signHeaderHex);
-        return TpmUtils.concat(signHeaderBytes, sigResult);
+        tempQuoteFile.delete();*/
+        return new TpmQuote(System.currentTimeMillis(), pcrBanks, quote.toTpm());
     }
 
     @Override

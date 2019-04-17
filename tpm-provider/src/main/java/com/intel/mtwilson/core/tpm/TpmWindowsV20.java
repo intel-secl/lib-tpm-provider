@@ -121,8 +121,8 @@ class TpmWindowsV20 extends TpmWindows {
                     case "SHA256" :
                         pcrBanks.add(PcrBank.SHA256);
                         break;
-                    case "SHA344" :
-                        pcrBanks.add(PcrBank.SHA344);
+                    case "SHA384" :
+                        pcrBanks.add(PcrBank.SHA384);
                         break;
                     case "SHA512" :
                         pcrBanks.add(PcrBank.SHA512);
