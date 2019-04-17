@@ -627,7 +627,7 @@ public abstract class Tpm {
         /**
          * Indicate TPM supports SHA384 Platform Configuration Registers
          */
-        SHA344("0x0C"),
+        SHA384("0x0C"),
         /**
          * Indicates TPM supports SHA512 Platform Configuration Registers
          */
