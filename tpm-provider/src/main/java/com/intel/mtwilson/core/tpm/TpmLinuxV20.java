@@ -64,14 +64,19 @@ class TpmLinuxV20 extends TpmLinux {
         tpmNew._setDevice(base);
     }
 
-    private void changeAuth(byte[] ownerAuth) throws IOException, TpmException {
-        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.OWNER), ownerAuth);
-        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.ENDORSEMENT), ownerAuth);
-        tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.LOCKOUT), ownerAuth);
+    private void changeAuth(byte[] ownerAuth) throws Tpm.TpmException {
+        //try {
+            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.OWNER), ownerAuth);
+            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.ENDORSEMENT), ownerAuth);
+            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.LOCKOUT), ownerAuth);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
+            throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
+        }*/
     }
 
     @Override
-    public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
+    public void takeOwnership(byte[] newOwnerAuth) throws Tpm.TpmException {
         changeAuth(newOwnerAuth);
         TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
                 new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.decrypt,
@@ -80,12 +85,27 @@ class TpmLinuxV20 extends TpmLinux {
                 new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
                         new TPMS_NULL_ASYM_SCHEME(),2048,0),
                 new TPM2B_PUBLIC_KEY_RSA());
-        CreatePrimaryResponse response = tpmNew.CreatePrimary(TPM_HANDLE.from(TPM_RH.OWNER),
-                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+
+        CreatePrimaryResponse cpResponse;
+        //try {
+            cpResponse = tpmNew.CreatePrimary(TPM_HANDLE.from(TPM_RH.OWNER),
+                    new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
+        }*/
+        System.out.println("response : " + cpResponse.toString());
 
         byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
-        tpmNew.EvictControl(TPM_HANDLE.from(TPM_RH.OWNER), response.handle,
-                TPM_HANDLE.fromTpm(persistent));
+        TPM_HANDLE ohandle = TPM_HANDLE.fromTpm(persistent);
+        ohandle.AuthValue = newOwnerAuth;
+        //try {
+            tpmNew.EvictControl(TPM_HANDLE.from(TPM_RH.OWNER), cpResponse.handle,
+                    ohandle);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+        }*/
     }
 
     @Override
@@ -130,17 +150,29 @@ class TpmLinuxV20 extends TpmLinux {
     }
 
     private int findKeyHandle(String mask) throws Tpm.TpmException, IOException {
-        TpmTool listPersistent = new TpmTool(getTpmToolsPath(), ("tpm2_listpersistent"));
-        CommandLineResult result = listPersistent.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.findKey tpm2_listpersistent returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.findKey tpm2_listpersistent returned nonzero error", result.getReturnCode());
-        }
+        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+        TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
+        System.out.println(handles.handle.length + " persistent objects defined.");
+
+        ReadPublicResponse rpResponse;
         Pattern p = Pattern.compile(mask);
-        Matcher m = p.matcher(result.getStandardOut());
-        if (m.find()) {
-            return Long.decode(m.group()).intValue();
+        Matcher m;
+        for (int i = 0; i < handles.handle.length; i++) {
+            System.out.println(i + ". Persistent handle: " + handles.handle[i].toString());
+            rpResponse = tpmNew._allowErrors().ReadPublic(handles.handle[i]);
+            TPM_RC rc = tpmNew._getLastResponseCode();
+            if (rc == TPM_RC.SUCCESS) {
+                m = p.matcher(handles.handle[i].toString());
+                if (m.find()) {
+                    return Long.decode(m.group()).intValue();
+                }
+            } else if (rc == TPM_RC.HANDLE) {
+                System.out.println(handles.handle[i].toString() + " does not exist.");
+            } else {
+                System.out.println("Unexpected failure " + rc + " of TPM2_ReadPublic for " + handles.handle[i].toString());
+            }
         }
+
         return 0;
     }
 
@@ -164,46 +196,77 @@ class TpmLinuxV20 extends TpmLinux {
     }
 
     private int getNextUsableHandle() throws Tpm.TpmException, IOException {
-        TpmTool listPersistent = new TpmTool(getTpmToolsPath(), ("tpm2_listpersistent"));
-        CommandLineResult result = listPersistent.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.getNextUsableHandle tpm2_listpersistent returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.getNextUsableHandle tpm2_listpersistent returned nonzero error", result.getReturnCode());
-        }
+        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+        TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
+        System.out.println(handles.handle.length + " persistent objects defined.");
+
         int index = 0x81010000;
-        for (int i = 0; i <= 255; i++) {
-            if (!result.getStandardOut().contains(String.format("0x%08x", index + i))) {
-                return index + i;
+        int count;
+        for (int j = 0; j <= 255; j++) {
+            count = 0;
+            for (int i = 0; i < handles.handle.length; i++) {
+                System.out.println(i + ". Persistent handle: " + handles.handle[i].toString());
+                if (!handles.handle[i].toString().contains(String.format("0x%08x", index + j))) {
+                    count++;
+                }
+            }
+            if (count == handles.handle.length) {
+                return index + j;
             }
         }
+
         throw new Tpm.TpmException("TpmLinuxV20.getNextUsableHandle no usable persistent handles are available");
     }
 
     private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException, IOException {
         int ekHandle = getNextUsableHandle();
-        File ekFile = Utils.getTempFile("endorsementkey", "tmp");
-        TpmTool getPubEk = new TpmTool(getTpmToolsPath(), ("tpm2_getpubek"));
-        getPubEk.addArgument("-e");
-        getPubEk.addArgument("${endorsePass}");
-        getPubEk.addArgument("-o");
-        getPubEk.addArgument("${ownerPass}");
-        getPubEk.addArgument("-H");
-        getPubEk.addArgument("${ekHandle}");
-        getPubEk.addArgument("-g");
-        getPubEk.addArgument("0x1");
-        getPubEk.addArgument("-f");
-        getPubEk.addArgument("${ekFile}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("endorsePass", "hex:" + TpmUtils.byteArrayToHexString(endorsePass));
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("ekHandle", String.format("0x%08x", ekHandle));
-        subMap.put("ekFile", ekFile);
-        getPubEk.setSubstitutionMap(subMap);
-        CommandLineResult result = getPubEk.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.createEk tpm2_getpubek returned nonzero error {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.createEk tpm2_getpubek returned nonzero error", result.getReturnCode());
-        }
+        System.out.println("ekHandle : " + String.format("0x%08x", ekHandle));
+
+        byte auth_policy[] = {
+                (byte)0x83, 0x71, (byte)0x97, 0x67, 0x44, (byte)0x84, (byte)0xB3, (byte)0xF8, 0x1A, (byte)0x90, (byte)0xCC,
+                (byte)0x8D, 0x46, (byte)0xA5, (byte)0xD7, 0x24, (byte)0xFD, 0x52, (byte)0xD7, 0x6E, 0x06, 0x52,
+                0x0B, 0x64, (byte)0xF2, (byte)0xA1, (byte)0xDA, 0x1B, 0x33, 0x14, 0x69, (byte)0xAA
+        };
+
+        TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
+                new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.adminWithPolicy, TPMA_OBJECT.decrypt,
+                        TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
+                auth_policy,
+                new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
+                        new TPMS_NULL_ASYM_SCHEME(),2048,0),
+                new TPM2B_PUBLIC_KEY_RSA());
+
+        TPM_HANDLE handle;
+        CreatePrimaryResponse cpResponse;
+        handle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+        handle.AuthValue = endorsePass;
+        //try {
+        cpResponse = tpmNew.CreatePrimary(handle,
+                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
+        }*/
+        System.out.println("create primary response: " + cpResponse.toString());
+
+        handle = TPM_HANDLE.from(TPM_RH.OWNER);
+        handle.AuthValue = ownerAuth;
+        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
+        ehandle.AuthValue = endorsePass;
+        //try {
+        tpmNew.EvictControl(handle, cpResponse.handle,
+                ehandle);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+        }*/
+
+        //try {
+        tpmNew.FlushContext(cpResponse.handle);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+        }*/
         return ekHandle;
     }
 
@@ -216,113 +279,108 @@ class TpmLinuxV20 extends TpmLinux {
     }
 
     private void clearAkHandle(byte[] ownerAuth) throws IOException, Tpm.TpmException {
-        TpmTool listPersistent = new TpmTool(getTpmToolsPath(), ("tpm2_listpersistent"));
-        CommandLineResult result = listPersistent.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.clearAkHandle tpm2_listpersistent returned nonzero errro {}", result.getReturnCode());
-            throw new Tpm.TpmException("TpmLinuxV20.clearAkHandle tpm2_listpersistent returned nonzero error", result.getReturnCode());
-        }
-        if (result.getStandardOut().contains("0x81018000")) {
-            TpmTool evictControl = new TpmTool(getTpmToolsPath(), ("tpm2_evictcontrol"));
-            evictControl.addArgument("-A");
-            evictControl.addArgument("o");
-            evictControl.addArgument("-H");
-            evictControl.addArgument("${aikHandle}");
-            evictControl.addArgument("-S");
-            evictControl.addArgument("${otherHandle}");
-            evictControl.addArgument("-P");
-            evictControl.addArgument("${ownerPass}");
-            Map<String, Object> subMap = new HashMap<>();
-            subMap.put("aikHandle", "0x81018000");
-            subMap.put("otherHandle", "0x81018000");
-            subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-            evictControl.setSubstitutionMap(subMap);
-            result = evictControl.execute();
-            if (result.getReturnCode() != 0) {
-                LOG.debug("TpmLinuxV20.clearAkHandle tpm2_evictcontrol returned nonzero error {}", result.getReturnCode());
-                throw new Tpm.TpmException("TpmLinuxV20.clearAkHandle tpm2_evictcontrol returned nonzero error", result.getReturnCode());
-            }
+        int index = findKeyHandle("0x81018000");
+        if (index != 0) {
+
+            TPM_HANDLE handle = TPM_HANDLE.from(TPM_RH.OWNER);
+            handle.AuthValue = ownerAuth;
+            //try {
+            tpmNew.EvictControl(handle, TPM_HANDLE.from(0x81018000),
+                    TPM_HANDLE.from(0x81018000));
+            /*} catch (tss.TpmException e) {
+                LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+                throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            }*/
         }
     }
 
     @Override
     public byte[] getEndorsementKeyModulus(byte[] ownerAuth) throws IOException, Tpm.TpmException {
         int ekHandle = findOrCreateEk(ownerAuth, ownerAuth);
-        File ekFile = Utils.getTempFile("endorsementkey", "pub");
-        TpmTool readPublic = new TpmTool(getTpmToolsPath(), ("tpm2_readpublic"));
-        readPublic.addArgument("-H");
-        readPublic.addArgument("${ekHandle}");
-        readPublic.addArgument("-o");
-        readPublic.addArgument("${ekFile}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("ekHandle", String.format("0x%08x", ekHandle));
-        subMap.put("ekFile", ekFile);
-        readPublic.setSubstitutionMap(subMap);
-        CommandLineResult result = readPublic.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.getEndorsementKeyModulus failed to read public key");
-            throw new Tpm.TpmException("TpmLinuxV20.getEndorsementKeyModulus failed to read public key");
-        }
-        byte[] ekMod = FileUtils.readFileToByteArray(ekFile);
-        ekFile.delete();
-        return Arrays.copyOfRange(ekMod, 60, 256 + 60);
+        TPM_HANDLE handle = new TPM_HANDLE(ekHandle);
+        handle.AuthValue = ownerAuth;
+        ReadPublicResponse ekPub = tpmNew.ReadPublic(handle);
+        System.out.println("ekPub : " + ekPub.toString());
+        return ((TPM2B_PUBLIC_KEY_RSA)ekPub.outPublic.unique).buffer;
     }
-    
+
     @Override
     public IdentityRequest collateIdentityRequest(byte[] ownerAuth, byte[] keyAuth, PublicKey pcaPubKey) throws IOException, Tpm.TpmException, CertificateEncodingException {
         int ekHandle = findOrCreateEk(ownerAuth, ownerAuth);
         LOG.info("TpmLinuxV20.collateIdentityRequest using EkHandle: {}", String.format("0x%08x", ekHandle));
         // existing akHandle so we can use it
         clearAkHandle(ownerAuth);
-        File aikFile = Utils.getTempFile("aik", "tmp");
-        File aikNameFile = Utils.getTempFile("aikname", "tmp");
-        TpmTool tool = new TpmTool(getTpmToolsPath(), ("tpm2_getpubak"));
-        tool.addArgument("-e");
-        tool.addArgument("${endorsePass}");
-        tool.addArgument("-o");
-        tool.addArgument("${ownerPass}");
-        tool.addArgument("-P");
-        tool.addArgument("${aikPass}");
-        tool.addArgument("-E");
-        tool.addArgument("${ekHandle}");
-        tool.addArgument("-k");
-        tool.addArgument("${aikHandle}");
-        tool.addArgument("-f");
-        tool.addArgument("${aikFile}");
-        tool.addArgument("-n");
-        tool.addArgument("${aikNameFile}");
-        tool.addArgument("-g");
-        tool.addArgument("${aikTypeHex}");
-        tool.addArgument("-D");
-        tool.addArgument("0x000B");
-        tool.addArgument("-s");
-        tool.addArgument("0x0014");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("endorsePass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("aikPass", "hex:" + TpmUtils.byteArrayToHexString(keyAuth));
-        subMap.put("ekHandle", String.format("0x%08x", ekHandle));
-        subMap.put("aikHandle", "0x81018000");
-        subMap.put("aikFile", aikFile);
-        subMap.put("aikNameFile", aikNameFile);
-        subMap.put("aikTypeHex", Tpm.EncryptionAlgorithm.RSA.toHex());
-        tool.setSubstitutionMap(subMap);
-        CommandLineResult result = tool.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmModule20.collateIdentityRequest returned nonzero error {} stderr {}", result.getReturnCode(), result.getStandardError());
-            throw new Tpm.TpmException("TpmModule20.collateIdentityRequest returned nonzero error", result.getReturnCode());
+        byte[] nonceCaller = TpmUtils.createRandomBytes(20);
+        // Start a policy session to be used with ActivateCredential()
+        StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                nonceCaller, new byte[0], TPM_SE.POLICY,
+                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
+
+        TPM_HANDLE endorseHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+        endorseHandle.AuthValue = ownerAuth;
+        // Apply the policy necessary to authorize an EK on Windows
+        PolicySecretResponse psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
+                new byte[0], new byte[0], new byte[0], 0);
+
+        TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
+                new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.sign,
+                        TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
+                new byte[0],
+                new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.NULL, 0, TPM_ALG_ID.NULL),
+                        new TPMS_SIG_SCHEME_RSASSA(TPM_ALG_ID.SHA256),2048,0),
+                new TPM2B_PUBLIC_KEY_RSA());
+
+        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
+        ehandle.AuthValue = ownerAuth;
+        CreateResponse cResponse = tpmNew._withSession(sasResponse.handle).Create(ehandle,
+                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+        System.out.println("create response : " + cResponse.toString());
+
+        tpmNew.FlushContext(sasResponse.handle);
+
+        // Start a policy session to be used with ActivateCredential()
+        sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                nonceCaller, new byte[0], TPM_SE.POLICY,
+                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
+
+        // Apply the policy necessary to authorize an EK on Windows
+        psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
+                new byte[0], new byte[0], new byte[0], 0);
+
+        TPM_HANDLE loadHandle = tpmNew._withSession(sasResponse.handle).Load(ehandle, cResponse.outPrivate, cResponse.outPublic);
+        System.out.println("loaded handle : " + loadHandle.toString());
+
+        tpmNew.FlushContext(sasResponse.handle);
+
+        TPM_HANDLE ohandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ohandle.AuthValue = ownerAuth;
+        byte[] persistent = new byte[] { (byte) 0x81, 0x01, (byte) 0x80, 0x00 };
+        TPM_HANDLE ahandle = TPM_HANDLE.fromTpm(persistent);
+        ahandle.AuthValue = keyAuth;
+        //try {
+        tpmNew.EvictControl(ohandle, loadHandle,
+                ahandle);
+        /*} catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+        }*/
+        tpmNew.FlushContext(loadHandle);
+
+        ReadPublicResponse rpResponse = tpmNew._allowErrors().ReadPublic(TPM_HANDLE.fromTpm(persistent));
+        System.out.println("read public response : " + rpResponse.toString());
+        TPM_RC rc = tpmNew._getLastResponseCode();
+        if (rc == TPM_RC.SUCCESS) {
+            System.out.println("read public response : " + rpResponse.toString());
+        } else if (rc == TPM_RC.HANDLE) {
+            System.out.println("handle does not exist.");
+        } else {
+            System.out.println("Unexpected failure " + rc + " of TPM2_ReadPublic for handle");
         }
-        LOG.debug("TpmLinuxV20.collateIdentityRequest debugdebugAIK handle: {}", "0x81018000");
-        // currenlty we don't export the entire AIK blob, since its persisted on the TPM, and we access it through a handle. 
-        // For TPM2.0 we can just return the handle instead of the actual blob, and achieve the same effect
-        byte[] aikHandle = Utils.intToByteArray(0x81018000);
-        byte[] credRequest = FileUtils.readFileToByteArray(aikFile);
-        credRequest = Arrays.copyOfRange(credRequest, 26, 256 + 26);
-        byte[] aikName = FileUtils.readFileToByteArray(aikNameFile);
-        LOG.debug("AIK pub key: {}", TpmUtils.byteArrayToHexString(credRequest));
-        LOG.debug("AIK name: {}", TpmUtils.byteArrayToHexString(aikName));
+
         // TPM 2.0 identityRequest and aikpub are used as the same
-        IdentityRequest newId = new IdentityRequest(this.getTpmVersion(), credRequest, credRequest, aikHandle, aikName);
+        IdentityRequest newId = new IdentityRequest(this.getTpmVersion(),
+                ((TPM2B_PUBLIC_KEY_RSA)rpResponse.outPublic.unique).buffer,
+                ((TPM2B_PUBLIC_KEY_RSA)rpResponse.outPublic.unique).buffer, persistent, rpResponse.name);
         return newId;
     }
 
@@ -332,9 +390,36 @@ class TpmLinuxV20 extends TpmLinux {
         int akHandle = findAikHandle();
         int ekHandle = findEkHandle();
         LOG.debug(" AIK Handle : {}", akHandle);
-        LOG.debug(" AIK Handle : {}", String.format("0x%08x", akHandle));
-        LOG.debug(" EK Handle : {}", ekHandle);
-        LOG.debug(" EK Handle : {}", String.format("0x%08x", ekHandle));
+
+        byte[] nonceCaller = TpmUtils.createRandomBytes(20);
+        // Start a policy session to be used with ActivateCredential()
+        StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                nonceCaller, new byte[0], TPM_SE.POLICY,
+                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
+
+        TPM_HANDLE endorseHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+        endorseHandle.AuthValue = ownerAuth;
+        // Apply the policy necessary to authorize an EK on Windows
+        PolicySecretResponse psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
+                new byte[0], new byte[0], new byte[0], 0);
+
+        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
+        ehandle.AuthValue = ownerAuth;
+        TPM_HANDLE ahandle = TPM_HANDLE.from(akHandle);
+        ahandle.AuthValue = ownerAuth;
+
+        byte[] credential = proofRequest.getCredential();
+        byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
+        byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
+        TPMS_ID_OBJECT object = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
+
+        byte[] recoveredSecret = tpmNew._allowErrors()._withSessions(TPM_HANDLE.pwSession(keyAuth), sasResponse.handle).ActivateCredential(ahandle, ehandle, object, proofRequest.getSecret());
+        TPM_RC rc = tpmNew._getLastResponseCode();
+        System.out.println("response code : " + rc.toString());
+        System.out.println("recoveredSecret : " + TpmUtils.byteArrayToHexString(recoveredSecret));
+
+        tpmNew.FlushContext(sasResponse.handle);
+
         File credentialBlobFile = Utils.getTempFile("mkcredential", "out");
         File decryptedCred = Utils.getTempFile("decrypted", "out");
 
@@ -366,6 +451,7 @@ class TpmLinuxV20 extends TpmLinux {
             throw new Tpm.TpmException("Tpm2 activatecredential returned non zero error");
         }
         byte[] decrypted = FileUtils.readFileToByteArray(decryptedCred);
+        System.out.println("decrypted : " + TpmUtils.byteArrayToHexString(decrypted));
         try {
             return Utils.decryptSymCaAttestation(decrypted, proofRequest.getSymBlob());
         } catch (BufferUnderflowException | SymCaDecryptionException ex) {
