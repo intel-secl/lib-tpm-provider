@@ -94,7 +94,7 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
             throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
         }*/
-        System.out.println("response : " + cpResponse.toString());
+        System.out.println("create primary response : " + cpResponse.toString());
 
         byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
         TPM_HANDLE ohandle = TPM_HANDLE.fromTpm(persistent);
@@ -154,25 +154,15 @@ class TpmLinuxV20 extends TpmLinux {
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
         System.out.println(handles.handle.length + " persistent objects defined.");
 
-        ReadPublicResponse rpResponse;
         Pattern p = Pattern.compile(mask);
         Matcher m;
         for (int i = 0; i < handles.handle.length; i++) {
             System.out.println(i + ". Persistent handle: " + handles.handle[i].toString());
-            rpResponse = tpmNew._allowErrors().ReadPublic(handles.handle[i]);
-            TPM_RC rc = tpmNew._getLastResponseCode();
-            if (rc == TPM_RC.SUCCESS) {
-                m = p.matcher(handles.handle[i].toString());
-                if (m.find()) {
-                    return Long.decode(m.group()).intValue();
-                }
-            } else if (rc == TPM_RC.HANDLE) {
-                System.out.println(handles.handle[i].toString() + " does not exist.");
-            } else {
-                System.out.println("Unexpected failure " + rc + " of TPM2_ReadPublic for " + handles.handle[i].toString());
+            m = p.matcher(handles.handle[i].toString());
+            if (m.find()) {
+                return Long.decode(m.group()).intValue();
             }
         }
-
         return 0;
     }
 
@@ -214,7 +204,6 @@ class TpmLinuxV20 extends TpmLinux {
                 return index + j;
             }
         }
-
         throw new Tpm.TpmException("TpmLinuxV20.getNextUsableHandle no usable persistent handles are available");
     }
 
@@ -327,7 +316,7 @@ class TpmLinuxV20 extends TpmLinux {
                         TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
                 new byte[0],
                 new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.NULL, 0, TPM_ALG_ID.NULL),
-                        new TPMS_SIG_SCHEME_RSASSA(TPM_ALG_ID.SHA256),2048,0),
+                        new TPMS_SIG_SCHEME_RSASSA(TPM_ALG_ID.SHA256),2048,65537),
                 new TPM2B_PUBLIC_KEY_RSA());
 
         TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
@@ -335,7 +324,6 @@ class TpmLinuxV20 extends TpmLinux {
         CreateResponse cResponse = tpmNew._withSession(sasResponse.handle).Create(ehandle,
                 new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
         System.out.println("create response : " + cResponse.toString());
-
         tpmNew.FlushContext(sasResponse.handle);
 
         // Start a policy session to be used with ActivateCredential()
@@ -348,8 +336,6 @@ class TpmLinuxV20 extends TpmLinux {
                 new byte[0], new byte[0], new byte[0], 0);
 
         TPM_HANDLE loadHandle = tpmNew._withSession(sasResponse.handle).Load(ehandle, cResponse.outPrivate, cResponse.outPublic);
-        System.out.println("loaded handle : " + loadHandle.toString());
-
         tpmNew.FlushContext(sasResponse.handle);
 
         TPM_HANDLE ohandle = TPM_HANDLE.from(TPM_RH.OWNER);
@@ -366,21 +352,13 @@ class TpmLinuxV20 extends TpmLinux {
         }*/
         tpmNew.FlushContext(loadHandle);
 
-        ReadPublicResponse rpResponse = tpmNew._allowErrors().ReadPublic(TPM_HANDLE.fromTpm(persistent));
-        System.out.println("read public response : " + rpResponse.toString());
-        TPM_RC rc = tpmNew._getLastResponseCode();
-        if (rc == TPM_RC.SUCCESS) {
-            System.out.println("read public response : " + rpResponse.toString());
-        } else if (rc == TPM_RC.HANDLE) {
-            System.out.println("handle does not exist.");
-        } else {
-            System.out.println("Unexpected failure " + rc + " of TPM2_ReadPublic for handle");
-        }
+        ReadPublicResponse akPub = tpmNew.ReadPublic(ahandle);
+        System.out.println("akPub : " + akPub.toString());
 
         // TPM 2.0 identityRequest and aikpub are used as the same
         IdentityRequest newId = new IdentityRequest(this.getTpmVersion(),
-                ((TPM2B_PUBLIC_KEY_RSA)rpResponse.outPublic.unique).buffer,
-                ((TPM2B_PUBLIC_KEY_RSA)rpResponse.outPublic.unique).buffer, persistent, rpResponse.name);
+                ((TPM2B_PUBLIC_KEY_RSA)akPub.outPublic.unique).buffer,
+                ((TPM2B_PUBLIC_KEY_RSA)akPub.outPublic.unique).buffer, persistent, akPub.name);
         return newId;
     }
 
@@ -403,57 +381,24 @@ class TpmLinuxV20 extends TpmLinux {
         PolicySecretResponse psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
                 new byte[0], new byte[0], new byte[0], 0);
 
+        byte[] credential = proofRequest.getCredential();
+        byte[] secret = proofRequest.getSecret();
+        byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
+        byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
+        secret = Arrays.copyOfRange(secret, 2, 2 + 256);
+        TPMS_ID_OBJECT credentialBlob = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
+
         TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
         ehandle.AuthValue = ownerAuth;
         TPM_HANDLE ahandle = TPM_HANDLE.from(akHandle);
         ahandle.AuthValue = ownerAuth;
-
-        byte[] credential = proofRequest.getCredential();
-        byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
-        byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
-        TPMS_ID_OBJECT object = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
-
-        byte[] recoveredSecret = tpmNew._allowErrors()._withSessions(TPM_HANDLE.pwSession(keyAuth), sasResponse.handle).ActivateCredential(ahandle, ehandle, object, proofRequest.getSecret());
-        TPM_RC rc = tpmNew._getLastResponseCode();
-        System.out.println("response code : " + rc.toString());
-        System.out.println("recoveredSecret : " + TpmUtils.byteArrayToHexString(recoveredSecret));
-
+        byte[] recoveredSecret = tpmNew._withSessions(TPM_HANDLE.pwSession(keyAuth),
+                sasResponse.handle).ActivateCredential(ahandle, ehandle, credentialBlob, secret);
+        System.out.println("recovered secret : " + TpmUtils.byteArrayToHexString(recoveredSecret));
         tpmNew.FlushContext(sasResponse.handle);
 
-        File credentialBlobFile = Utils.getTempFile("mkcredential", "out");
-        File decryptedCred = Utils.getTempFile("decrypted", "out");
-
-        FileUtils.writeByteArrayToFile(credentialBlobFile, TpmUtils.concat(TpmUtils.concat(proofRequest.getHeader(),
-                proofRequest.getCredential()), proofRequest.getSecret()));
-        TpmTool activateCredential = new TpmTool(getTpmToolsPath(), ("tpm2_activatecredential"));
-        activateCredential.addArgument("-e");
-        activateCredential.addArgument("${ownerPass}");
-        activateCredential.addArgument("-P");
-        activateCredential.addArgument("${aikAuth}");
-        activateCredential.addArgument("-H");
-        activateCredential.addArgument("${akHandle}");
-        activateCredential.addArgument("-k");
-        activateCredential.addArgument("${ekHandle}");
-        activateCredential.addArgument("-f");
-        activateCredential.addArgument("${credentialBlobFile}");
-        activateCredential.addArgument("-o");
-        activateCredential.addArgument("${decryptedCred}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("ownerPass", "hex:" + TpmUtils.byteArrayToHexString(ownerAuth));
-        subMap.put("aikAuth", "hex:" + TpmUtils.byteArrayToHexString(keyAuth));
-        subMap.put("akHandle", String.format("0x%08x", akHandle));
-        subMap.put("ekHandle", String.format("0x%08x", ekHandle));
-        subMap.put("credentialBlobFile", credentialBlobFile);
-        subMap.put("decryptedCred", decryptedCred);
-        activateCredential.setSubstitutionMap(subMap);
-        CommandLineResult result = activateCredential.execute();
-        if (result.getReturnCode() != 0) {
-            throw new Tpm.TpmException("Tpm2 activatecredential returned non zero error");
-        }
-        byte[] decrypted = FileUtils.readFileToByteArray(decryptedCred);
-        System.out.println("decrypted : " + TpmUtils.byteArrayToHexString(decrypted));
         try {
-            return Utils.decryptSymCaAttestation(decrypted, proofRequest.getSymBlob());
+            return Utils.decryptSymCaAttestation(recoveredSecret, proofRequest.getSymBlob());
         } catch (BufferUnderflowException | SymCaDecryptionException ex) {
             LOG.debug("TpmLinuxV20.activateIdentity failed with exception", ex);
             throw new Tpm.TpmException("TpmLinuxV20.activateIdentity failed with exception", ex);
@@ -702,107 +647,60 @@ class TpmLinuxV20 extends TpmLinux {
         return index == nvPub.nvPublic.nvIndex.handle;
     }
 
+    private PCR_ReadResponse getPcrsRequired(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) throws IOException {
+        PCR_ReadResponse pcrsRequired = null;
+        for(TPMS_PCR_SELECTION pcrSelection: getTpmsPcrSelections(pcrBanks, pcrs)) {
+            PCR_ReadResponse pcrsNew = tpmNew.PCR_Read(new TPMS_PCR_SELECTION[]{pcrSelection});
+            if( pcrsRequired == null) {
+                pcrsRequired = pcrsNew;
+            } else {
+                pcrsRequired.pcrSelectionOut = concatPcrSelect(pcrsRequired.pcrSelectionOut, pcrsNew.pcrSelectionOut);
+                pcrsRequired.pcrValues = concatDigest(pcrsRequired.pcrValues, pcrsNew.pcrValues);
+            }
+        }
+        return pcrsRequired;
+    }
+
+    private TPMS_PCR_SELECTION[] concatPcrSelect(TPMS_PCR_SELECTION[] blob1, TPMS_PCR_SELECTION[] blob2) {
+        TPMS_PCR_SELECTION[] toReturn = new TPMS_PCR_SELECTION[blob1.length + blob2.length];
+        int i = 0;
+        for(TPMS_PCR_SELECTION digest: blob1) {
+            toReturn[i] = digest;
+            i++;
+        }
+        for(TPMS_PCR_SELECTION digest: blob2) {
+            toReturn[i] = digest;
+            i++;
+        }
+        return toReturn;
+    }
+
+    private TPM2B_DIGEST[] concatDigest(TPM2B_DIGEST[] blob1, TPM2B_DIGEST[] blob2) {
+        TPM2B_DIGEST[] toReturn = new TPM2B_DIGEST[blob1.length + blob2.length];
+        int i = 0;
+        for(TPM2B_DIGEST digest: blob1) {
+            toReturn[i] = digest;
+            i++;
+        }
+        for(TPM2B_DIGEST digest: blob2) {
+            toReturn[i] = digest;
+            i++;
+        }
+        return toReturn;
+    }
+
     @Override
     public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikBlob, byte[] aikAuth, byte[] nonce)
             throws IOException, Tpm.TpmException {
         byte[] pcrsResult = getPcrs(pcrBanks, pcrs);
-        System.out.println("Pcr List from code - " + TpmUtils.byteArrayToHexString(pcrsResult));
+        System.out.println("PcrList: " + TpmUtils.byteArrayToHexString(pcrsResult));
 
         TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
         TPM_HANDLE handle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
         handle.AuthValue = aikAuth;
         QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
-        System.out.println("--------------- Quote ------------ \n  " +  quote.toString());
+        System.out.println("Quote: " + quote.toString());
 
-        // Validate the quote using tss.Java support functions
-        TPM_HANDLE ekhandle = new TPM_HANDLE(findEkHandle());
-        ekhandle.AuthValue = aikAuth;
-        ReadPublicResponse aikPub = tpmNew.ReadPublic(ekhandle);
-        boolean signOk = aikPub.outPublic.validateSignature(nonce, new TPMS_NULL_SIG_SCHEME());
-        System.out.println("Sign validated:" + signOk);
-
-        //boolean quoteOk = aikPub.outPublic.validateQuote(pcrsNew, nonce, quote);
-        //System.out.println("Quote validated:" + quoteOk);
-        /*
-        // first convert the Java arguments into string form to pass into tpm2_listpcrs and then tpm2_quote
-        String quoteAlgWithPcrs;
-        List<String> bankList = new ArrayList<>();
-        pcrBanks.forEach((bank) -> {
-            String selectedPcrList = pcrs.stream().map(Pcr::toInt).sorted().map(pcr -> Integer.toString(pcr)).collect(Collectors.joining(","));
-            bankList.add(bank.toHex() + ":" + selectedPcrList);
-        });
-        quoteAlgWithPcrs = StringUtils.join(bankList, '+');
-        File tempPcrsFile = Utils.getTempFile("pcrs", "tmp");
-        TpmTool pcrList = new TpmTool(getTpmToolsPath(), ("tpm2_pcrlist"));
-        pcrList.addArgument("-L");
-        pcrList.addArgument("${pcrs}");
-        pcrList.addArgument("-o");
-        pcrList.addArgument("${file}");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("pcrs", quoteAlgWithPcrs);
-        subMap.put("file", tempPcrsFile);
-        pcrList.setSubstitutionMap(subMap);
-        // execute tpm2_pcrlist
-        CommandLineResult result = pcrList.execute();
-        if (result.getReturnCode() != 0) {
-            throw new Tpm.TpmException("TpmLinuxV20.getQuote tpm2_listpcrs failed", result.getReturnCode());
-        }
-        // now we move to tpm2_quote, create some temporary files to store the output
-        File tempMessageFile = Utils.getTempFile("quote", "tmp");
-        File tempSigFile = Utils.getTempFile("quote_sig", "tmp");
-        int aikHandle = ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt();
-        TpmTool tpmQuote = new TpmTool(getTpmToolsPath(), ("tpm2_quote"));
-        tpmQuote.addArgument("-k");
-        tpmQuote.addArgument("${aikHandle}");
-        tpmQuote.addArgument("-P");
-        tpmQuote.addArgument("${aikAuth}");
-        tpmQuote.addArgument("-L");
-        tpmQuote.addArgument("${quoteAlg}");
-        tpmQuote.addArgument("-q");
-        tpmQuote.addArgument("${nonce}");
-        tpmQuote.addArgument("-m");
-        tpmQuote.addArgument("${messageFile}");
-        tpmQuote.addArgument("-s");
-        tpmQuote.addArgument("${sigFile}");
-        tpmQuote.addArgument("-f");
-        tpmQuote.addArgument("${format}");
-        subMap = new HashMap<>();
-        subMap.put("aikHandle", String.format("0x%08x", aikHandle));
-        subMap.put("aikAuth", "hex:" + TpmUtils.byteArrayToHexString(aikAuth));
-        subMap.put("quoteAlg", quoteAlgWithPcrs);
-        subMap.put("nonce", TpmUtils.byteArrayToHexString(nonce));
-        subMap.put("messageFile", tempMessageFile);
-        subMap.put("sigFile", tempSigFile);
-        subMap.put("format", "plain");
-        tpmQuote.setSubstitutionMap(subMap);
-        result = tpmQuote.execute();
-        if (result.getReturnCode() != 0) {
-            throw new Tpm.TpmException("TpmLinuxV20.getQuote tpm2_quote failed", result.getReturnCode());
-        }
-        byte[] pcrsResult = Files.readAllBytes(tempPcrsFile.toPath());
-        byte[] messageResult = Files.readAllBytes(tempMessageFile.toPath());
-        byte[] sigResult = Files.readAllBytes(tempSigFile.toPath());
-        int SHORT_BYTES = 2;
-        File sigOFile = Utils.getTempFile("quote_old_sign", "temp");
-        FileUtils.writeByteArrayToFile(sigOFile, sigResult);
-        File msgFile = Utils.getTempFile("quote_msg", "temp");
-        FileUtils.writeByteArrayToFile(msgFile, messageResult);
-
-        sigResult = marshalSig(sigResult);        
-        File sigFile = Utils.getTempFile("quote_sign", "temp");
-        FileUtils.writeByteArrayToFile(sigFile, sigResult);
-
-        ByteBuffer quoteBlob = ByteBuffer.allocate((short)SHORT_BYTES + pcrsResult.length + messageResult.length + sigResult.length);
-        quoteBlob.order(ByteOrder.LITTLE_ENDIAN).putShort((short) messageResult.length);
-        quoteBlob.put(messageResult);
-        quoteBlob.put(sigResult);
-        quoteBlob.put(pcrsResult);
-
-        File ekkPubFile = Utils.getTempFile("all_quote", "temp");
-        FileUtils.writeByteArrayToFile(ekkPubFile, quoteBlob.array());
-        
-        tempPcrsFile.delete();
-        tempQuoteFile.delete();*/
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
         return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);
     }
