@@ -105,25 +105,27 @@ class TpmLinuxV20 extends TpmLinux {
                 new TPM2B_PUBLIC_KEY_RSA());
 
         CreatePrimaryResponse cpResponse;
-        //try {
-            cpResponse = tpmNew.CreatePrimary(TPM_HANDLE.from(TPM_RH.OWNER),
+        TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        oHandle.AuthValue = newOwnerAuth;
+        try {
+            cpResponse = tpmNew.CreatePrimary(oHandle,
                     new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-        /*} catch (tss.TpmException e) {
+        } catch (tss.TpmException e) {
             LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
             throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
-        }*/
+        }
         System.out.println("create primary response : " + cpResponse.toString());
 
         byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
-        TPM_HANDLE ohandle = TPM_HANDLE.fromTpm(persistent);
-        ohandle.AuthValue = newOwnerAuth;
-        //try {
-            tpmNew.EvictControl(TPM_HANDLE.from(TPM_RH.OWNER), cpResponse.handle,
-                    ohandle);
-        /*} catch (tss.TpmException e) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-        }*/
+        try {
+            tpmNew.EvictControl(oHandle, cpResponse.handle,
+                    TPM_HANDLE.fromTpm(persistent));
+        } catch (tss.TpmException e) {
+            if (!e.getMessage().contains("NV_DEFINED")) {
+                LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+                throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
+            }
+        }
     }
 
     @Override
