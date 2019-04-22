@@ -170,8 +170,14 @@ class TpmLinuxV20 extends TpmLinux {
         nvWrite(ownerAuth, getECIndex()+1, part2Buf);
     }
 
-    private int findKeyHandle(String mask) throws Tpm.TpmException, IOException {
-        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+    private int findKeyHandle(String mask) throws Tpm.TpmException {
+        GetCapabilityResponse gcResponse;
+        try {
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+        } catch(tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
+            throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
+        }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
         System.out.println(handles.handle.length + " persistent objects defined.");
 
@@ -187,7 +193,7 @@ class TpmLinuxV20 extends TpmLinux {
         return 0;
     }
 
-    private int findAikHandle() throws Tpm.TpmException, IOException {
+    private int findAikHandle() throws Tpm.TpmException {
         for (int i = 0x81018; i < 0x81020; i++) {
             int index = findKeyHandle(String.format("0x%05x...", i));
             if (index != 0) {
@@ -197,7 +203,7 @@ class TpmLinuxV20 extends TpmLinux {
         throw new Tpm.TpmException("TpmLinuxV20.findAk could not find Ak");
     }
 
-    private int findEkHandle() throws IOException, Tpm.TpmException {
+    private int findEkHandle() throws Tpm.TpmException {
         int index = findKeyHandle("0x810100..");
         if (index != 0) {
             return index;
@@ -206,8 +212,14 @@ class TpmLinuxV20 extends TpmLinux {
         }
     }
 
-    private int getNextUsableHandle() throws Tpm.TpmException, IOException {
-        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+    private int getNextUsableHandle() throws Tpm.TpmException {
+        GetCapabilityResponse gcResponse;
+        try {
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+        } catch(tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
+            throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
+        }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
         System.out.println(handles.handle.length + " persistent objects defined.");
 
