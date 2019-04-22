@@ -25,13 +25,7 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -64,19 +58,43 @@ class TpmLinuxV20 extends TpmLinux {
         tpmNew._setDevice(base);
     }
 
-    private void changeAuth(byte[] ownerAuth) throws Tpm.TpmException {
-        //try {
-            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.OWNER), ownerAuth);
-            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.ENDORSEMENT), ownerAuth);
-            tpmNew.HierarchyChangeAuth(TPM_HANDLE.from(TPM_RH.LOCKOUT), ownerAuth);
-        /*} catch (tss.TpmException e) {
-            LOG.debug("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
-            throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
-        }*/
+    private boolean changeAuth(byte[] oldAuth, byte[] newAuth) {
+        Set<TPM_HANDLE> handles = new HashSet<>(Arrays.asList(TPM_HANDLE.from(TPM_RH.OWNER),
+                TPM_HANDLE.from(TPM_RH.ENDORSEMENT), TPM_HANDLE.from(TPM_RH.LOCKOUT)));
+
+        for (TPM_HANDLE handle : handles) {
+            if (oldAuth != null) {
+                handle.AuthValue = oldAuth;
+            }
+            try {
+                tpmNew.HierarchyChangeAuth(handle, newAuth);
+            } catch (tss.TpmException e) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void changeAuth(byte[] ownerAuth) throws IOException, Tpm.TpmException {
+        if (!changeAuth(null, ownerAuth)) {
+            byte[] newOwnerPass = TpmUtils.createRandomBytes(20);
+            if (!changeAuth(ownerAuth, newOwnerPass)) {
+                // supplied newOwnerAuth is invalid
+                LOG.debug("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
+                throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
+            } else {
+                if (!changeAuth(newOwnerPass, ownerAuth)) {
+                    LOG.debug("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
+                    throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: "
+                            + "Could not change TPM password back from temporary. TPM must be reset from bios");
+                }
+            }
+        }
     }
 
     @Override
-    public void takeOwnership(byte[] newOwnerAuth) throws Tpm.TpmException {
+    public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
         changeAuth(newOwnerAuth);
         TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
                 new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.decrypt,
@@ -770,12 +788,7 @@ class TpmLinuxV20 extends TpmLinux {
      */
     @Override
     public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
-        try {
-            changeAuth(ownerAuth);
-        } catch (Tpm.TpmException e) {
-            return false;
-        }
-        return true;
+        return changeAuth(ownerAuth, ownerAuth);
     }
 
 }
