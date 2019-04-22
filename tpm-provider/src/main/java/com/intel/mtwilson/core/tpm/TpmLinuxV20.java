@@ -172,7 +172,8 @@ class TpmLinuxV20 extends TpmLinux {
     private int findKeyHandle(String mask) throws Tpm.TpmException {
         GetCapabilityResponse gcResponse;
         try {
-            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES,
+                    TPM_HT.PERSISTENT.toInt() << 24, 16);
         } catch(tss.TpmException e) {
             LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
             throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
@@ -214,7 +215,8 @@ class TpmLinuxV20 extends TpmLinux {
     private int getNextUsableHandle() throws Tpm.TpmException {
         GetCapabilityResponse gcResponse;
         try {
-            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES,
+                    TPM_HT.PERSISTENT.toInt() << 24, 16);
         } catch(tss.TpmException e) {
             LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
             throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
@@ -257,37 +259,24 @@ class TpmLinuxV20 extends TpmLinux {
                         new TPMS_NULL_ASYM_SCHEME(),2048,0),
                 new TPM2B_PUBLIC_KEY_RSA());
 
-        TPM_HANDLE handle;
-        CreatePrimaryResponse cpResponse;
-        handle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-        handle.AuthValue = endorsePass;
-        //try {
-        cpResponse = tpmNew.CreatePrimary(handle,
-                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-        /*} catch (tss.TpmException e) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
-        }*/
-        System.out.println("create primary response: " + cpResponse.toString());
+        try {
+            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+            eHandle.AuthValue = endorsePass;
+            CreatePrimaryResponse cpResponse = tpmNew.CreatePrimary(eHandle,
+                    new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+            System.out.println("create primary response: " + cpResponse.toString());
 
-        handle = TPM_HANDLE.from(TPM_RH.OWNER);
-        handle.AuthValue = ownerAuth;
-        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
-        ehandle.AuthValue = endorsePass;
-        //try {
-        tpmNew.EvictControl(handle, cpResponse.handle,
-                ehandle);
-        /*} catch (tss.TpmException e) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-        }*/
+            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+            oHandle.AuthValue = ownerAuth;
+            tpmNew.EvictControl(oHandle, cpResponse.handle,
+                    TPM_HANDLE.from(ekHandle));
 
-        //try {
-        tpmNew.FlushContext(cpResponse.handle);
-        /*} catch (tss.TpmException e) {
-            LOG.debug("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-            throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to make storage primary key persistent");
-        }*/
+            tpmNew.FlushContext(cpResponse.handle);
+        } catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.createEk failed to create ek");
+            throw new Tpm.TpmException("TpmLinuxV20.createEk failed to create ek");
+        }
+
         return ekHandle;
     }
 
