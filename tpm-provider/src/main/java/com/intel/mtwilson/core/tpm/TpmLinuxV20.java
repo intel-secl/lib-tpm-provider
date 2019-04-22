@@ -759,22 +759,12 @@ class TpmLinuxV20 extends TpmLinux {
      */
     @Override
     public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
-        TpmTool tool = new TpmTool(getTpmToolsPath(), "tpm2_takeownership");
-        String auth = "hex:" + TpmUtils.byteArrayToHexString(ownerAuth);
-        tool.addArgument("-o");
-        tool.addArgument(auth);
-        tool.addArgument("-e");
-        tool.addArgument(auth);
-        tool.addArgument("-l");
-        tool.addArgument(auth);
-        tool.addArgument("-O");
-        tool.addArgument(auth);
-        tool.addArgument("-E");
-        tool.addArgument(auth);
-        tool.addArgument("-L");
-        tool.addArgument(auth);
-        CommandLineResult result = tool.execute();
-        return result.getReturnCode() == 0;
+        try {
+            changeAuth(ownerAuth);
+        } catch (Tpm.TpmException e) {
+            return false;
+        }
+        return true;
     }
 
 }
