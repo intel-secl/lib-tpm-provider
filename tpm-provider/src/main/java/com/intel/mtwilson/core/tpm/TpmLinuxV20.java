@@ -4,45 +4,35 @@
  */
 package com.intel.mtwilson.core.tpm;
 
-import com.intel.mtwilson.core.tpm.model.CertifiedKey;
+import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
+import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
-import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
-import com.intel.mtwilson.core.tpm.shell.TpmTool;
-import com.intel.mtwilson.core.tpm.util.NvAttributeMapper;
 import com.intel.mtwilson.core.tpm.util.PcrBanksMapper;
 import com.intel.mtwilson.core.tpm.util.Utils;
 import com.intel.mtwilson.core.tpm.util.Utils.SymCaDecryptionException;
-import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
-import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
 import gov.niarl.his.privacyca.TpmUtils;
+import org.apache.commons.lang.ArrayUtils;
+import tss.TpmDeviceBase;
+import tss.tpm.*;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Files;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.StringUtils;
-import tss.TpmDeviceBase;
-import tss.TpmDeviceLinux;
-import tss.tpm.*;
+import static com.intel.mtwilson.core.tpm.util.NvAttributeMapper.getTpmaNvFromAttributes;
 
 /**
  *
  * @author dczech
  */
 class TpmLinuxV20 extends TpmLinux {
-
     private final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TpmLinuxV20.class);
 
     tss.Tpm tpmNew;
@@ -51,9 +41,8 @@ class TpmLinuxV20 extends TpmLinux {
         super();
     }
 
-    TpmLinuxV20(String tpmToolsPath) {
+    TpmLinuxV20(String tpmToolsPath, TpmDeviceBase base) {
         super(tpmToolsPath);
-        TpmDeviceBase base = new TpmDeviceLinux();
         tpmNew = new tss.Tpm();
         tpmNew._setDevice(base);
     }
@@ -84,6 +73,7 @@ class TpmLinuxV20 extends TpmLinux {
                 LOG.debug("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
                 throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership cannot take ownership; TPM claimed with a different password");
             } else {
+                // supplied newOwnerAuth is valid, so change TPM owner pass back from the temporary and do it again
                 if (!changeAuth(newOwnerPass, ownerAuth)) {
                     LOG.debug("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
                     throw new Tpm.TpmException("TpmLinuxV20.takeAndCheckOwnership CRITICAL ERROR: "
@@ -95,6 +85,7 @@ class TpmLinuxV20 extends TpmLinux {
 
     @Override
     public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
+        // basically do what tpm2-isowner.sh did, take ownership and see if we can change it and revert it from a temporary
         changeAuth(newOwnerAuth);
 
         TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
@@ -115,7 +106,6 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.takeOwnership failed to create storage primary key");
             throw new Tpm.TpmException("TpmLinuxV20.takeOwnership failed to create storage primary key");
         }
-        System.out.println("create primary response : " + cpResponse.toString());
 
         byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
         try {
@@ -134,7 +124,6 @@ class TpmLinuxV20 extends TpmLinux {
         if (credentialType != Tpm.CredentialType.EC) {
             throw new UnsupportedOperationException("TpmLinuxV20.getCredential Credential Types other than EC (Endorsement Credential) are not yet supported");
         }
-        // WARNING HACK CODE HERE
         if(nvIndexExists(getECIndex()) && nvIndexExists(getECIndex()+1)) {
             byte[] part1 = nvRead(ownerAuth, getECIndex(), nvIndexSize(getECIndex()));
             byte[] part2 = nvRead(ownerAuth, getECIndex()+1, nvIndexSize(getECIndex()+1));
@@ -150,7 +139,6 @@ class TpmLinuxV20 extends TpmLinux {
         if(credentialType != CredentialType.EC) {
             throw new UnsupportedOperationException("TpmLinuxV20.setCredential only CredentialType.EC is supported");
         }
-        // WARNING!!!!! REALLY AWKARD CODE BELOW. TPM2_NVWRITE HAS A BUG. PLEASE RESOLVE ASAP
         if(nvIndexExists(getECIndex())) {
             nvRelease(ownerAuth, getECIndex());
         }
@@ -180,12 +168,10 @@ class TpmLinuxV20 extends TpmLinux {
             throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
         }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
-        System.out.println(handles.handle.length + " persistent objects defined.");
 
         Pattern p = Pattern.compile(mask);
         Matcher m;
         for (int i = 0; i < handles.handle.length; i++) {
-            System.out.println(i + ". Persistent handle: " + handles.handle[i].toString());
             m = p.matcher(handles.handle[i].toString());
             if (m.find()) {
                 return Long.decode(m.group()).intValue();
@@ -223,14 +209,12 @@ class TpmLinuxV20 extends TpmLinux {
             throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
         }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
-        System.out.println(handles.handle.length + " persistent objects defined.");
 
         int index = 0x81010000;
         int count;
         for (int j = 0; j <= 255; j++) {
             count = 0;
             for (int i = 0; i < handles.handle.length; i++) {
-                System.out.println(i + ". Persistent handle: " + handles.handle[i].toString());
                 if (!handles.handle[i].toString().contains(String.format("0x%08x", index + j))) {
                     count++;
                 }
@@ -244,7 +228,6 @@ class TpmLinuxV20 extends TpmLinux {
 
     private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException, IOException {
         int ekHandle = getNextUsableHandle();
-        System.out.println("ekHandle : " + String.format("0x%08x", ekHandle));
 
         byte auth_policy[] = {
                 (byte)0x83, 0x71, (byte)0x97, 0x67, 0x44, (byte)0x84, (byte)0xB3, (byte)0xF8, 0x1A, (byte)0x90, (byte)0xCC,
@@ -265,7 +248,6 @@ class TpmLinuxV20 extends TpmLinux {
             eHandle.AuthValue = endorsePass;
             CreatePrimaryResponse cpResponse = tpmNew.CreatePrimary(eHandle,
                     new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-            System.out.println("create primary response: " + cpResponse.toString());
 
             TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
             oHandle.AuthValue = ownerAuth;
@@ -316,7 +298,7 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.getEndorsementKeyModulus failed to read public key");
             throw new Tpm.TpmException("TpmLinuxV20.getEndorsementKeyModulus failed to read public key");
         }
-        System.out.println("ekPub : " + ekPub.toString());
+
         return ((TPM2B_PUBLIC_KEY_RSA)ekPub.outPublic.unique).buffer;
     }
 
@@ -352,7 +334,6 @@ class TpmLinuxV20 extends TpmLinux {
 
             CreateResponse cResponse = tpmNew._withSession(sasResponse.handle).Create(TPM_HANDLE.from(ekHandle),
                     inSensitive, inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-            System.out.println("create response : " + cResponse.toString());
             tpmNew.FlushContext(sasResponse.handle);
 
             sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
@@ -379,7 +360,6 @@ class TpmLinuxV20 extends TpmLinux {
             throw new Tpm.TpmException("TpmModule20.collateIdentityRequest failed to create ak");
         }
 
-        System.out.println("akPub : " + akPub.toString());
         // TPM 2.0 identityRequest and aikpub are used as the same
         IdentityRequest newId = new IdentityRequest(this.getTpmVersion(),
                 ((TPM2B_PUBLIC_KEY_RSA)akPub.outPublic.unique).buffer,
@@ -417,7 +397,6 @@ class TpmLinuxV20 extends TpmLinux {
             aHandle.AuthValue = keyAuth;
             recoveredSecret = tpmNew._withSessions(TPM_HANDLE.pwSession(new byte[0]),
                     sasResponse.handle).ActivateCredential(aHandle, TPM_HANDLE.from(ekHandle), credentialBlob, secret);
-            System.out.println("recovered secret : " + TpmUtils.byteArrayToHexString(recoveredSecret));
             tpmNew.FlushContext(sasResponse.handle);
         } catch (tss.TpmException e) {
             throw new Tpm.TpmException("TpmLinuxV20.activateIdentity failed to activate credential");
@@ -429,121 +408,6 @@ class TpmLinuxV20 extends TpmLinux {
             LOG.debug("TpmLinuxV20.activateIdentity failed with exception", ex);
             throw new Tpm.TpmException("TpmLinuxV20.activateIdentity failed with exception", ex);
         }
-    }
-
-    @Override
-    public CertifiedKey createAndCertifyKey(Tpm.KeyType keyType, byte[] keyAuth, byte[] aikAuth) throws IOException, Tpm.TpmException {
-        final String srkHandle = "0x81000000";
-        File publicFile = Utils.getTempFile("out", "pub");
-        File privateFile = Utils.getTempFile("out", "priv");
-        TpmTool create = new TpmTool(getTpmToolsPath(), ("tpm2_create"));
-        create.addArgument("-H");
-        create.addArgument("${handle}");
-        create.addArgument("-g");
-        create.addArgument("${hashTypeHex}");
-        create.addArgument("-G");
-        create.addArgument("${encTypeHex}");
-        create.addArgument("-A");
-        create.addArgument("${attr}");
-        create.addArgument("-o");
-        create.addArgument("${outpub}");
-        create.addArgument("-O");
-        create.addArgument("${outpriv}");
-        create.addArgument("-X");
-        Map<String, Object> subMap = new HashMap<>();
-        subMap.put("handle", srkHandle); // SRK handle
-        subMap.put("hashTypeHex", Tpm.PcrBank.SHA256.toHex());
-        subMap.put("encTypeHex", Tpm.EncryptionAlgorithm.RSA.toHex());
-        String attr;
-        switch (keyType) {
-            case BIND:
-                attr = "0x00020072";
-                break;
-            case SIGN:
-                attr = "0x00040072";
-                break;
-            default:
-                LOG.debug("TpmLinuxV20.createAndCertifyKey keyType is not BIND or SIGN");
-                throw new IllegalArgumentException("TpmLinuxV20.createAndCertifyKey keyType is not BIND or SIGN");
-        }
-        subMap.put("attr", attr);
-        subMap.put("outpub", publicFile);
-        subMap.put("outpriv", privateFile);
-        create.setSubstitutionMap(subMap);
-        CommandLineResult result = create.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.createAndCertifyKey tpm2_load returned nonzero error {}", result.getReturnCode());
-            throw new TpmException("TpmLinuxV20.createAndCertify key tpm2_load returned nonzero error", result.getReturnCode());
-        }
-        File context = Utils.getTempFile("object", "context");
-        File outfilename = Utils.getTempFile("outfilename", "tmp");
-        File attestFile = Utils.getTempFile("out", "attest");
-        File sigFile = Utils.getTempFile("out", "sig");
-        TpmTool load = new TpmTool(getTpmToolsPath(), ("tpm2_load"));
-        load.addArgument("-H");
-        load.addArgument("${parentHandle}");
-        load.addArgument("-u");
-        load.addArgument("${inpub}");
-        load.addArgument("-r");
-        load.addArgument("${inpriv}");
-        load.addArgument("-C");
-        load.addArgument("${context}");
-        load.addArgument("-n");
-        load.addArgument("${outfilename}");
-        subMap.clear();
-        subMap.put("parentHandle", srkHandle);
-        subMap.put("inpub", publicFile);
-        subMap.put("inpriv", privateFile);
-        subMap.put("context", context);
-        subMap.put("outfilename", outfilename);
-        load.setSubstitutionMap(subMap);
-        result = load.execute();
-        if (result.getReturnCode() != 0) {
-            // throw
-            LOG.debug("TpmLinuxV20.createAndCertifyKey tpm2_load returned nonzero error {}", result.getReturnCode());
-            throw new TpmException("TpmLinuxV20.createAndCertify key tpm2_load returned nonzero error", result.getReturnCode());
-        }
-        TpmTool certify = new TpmTool(getTpmToolsPath(), ("tpm2_certify"));
-        certify.addArgument("-k");
-        certify.addArgument("${signingHandle}");
-        certify.addArgument("-K");
-        certify.addArgument("${signingPass}");
-        certify.addArgument("-g");
-        certify.addArgument("${hashAlgHex}");
-        certify.addArgument("-a");
-        certify.addArgument("${outAttest}");
-        certify.addArgument("-s");
-        certify.addArgument("${outSig}");
-        certify.addArgument("-C");
-        certify.addArgument("${context}");
-        certify.addArgument("-X");
-        subMap.clear();
-        subMap.put("signingHandle", String.format("0x%08x", findAikHandle()));
-        subMap.put("signingPass", TpmUtils.byteArrayToHexString(aikAuth));
-        subMap.put("hashAlgHex", Tpm.PcrBank.SHA256.toHex());
-        subMap.put("outAttest", attestFile);
-        subMap.put("outSig", sigFile);
-        subMap.put("context", context);
-        certify.setSubstitutionMap(subMap);
-        result = certify.execute();
-        if (result.getReturnCode() != 0) {
-            LOG.debug("TpmLinuxV20.createAndCertifyKey tpm2_certify returned nonzero error {}", result.getReturnCode());
-            throw new TpmException("TpmLinuxV20.createAndCertifyKey tpm2_certify returned nonzero error", result.getReturnCode());
-        }
-        CertifiedKey key = new CertifiedKey();
-        key.setKeyModulus(FileUtils.readFileToByteArray(publicFile));
-        key.setKeyBlob(FileUtils.readFileToByteArray(privateFile));
-        key.setKeyData(FileUtils.readFileToByteArray(attestFile));
-        key.setKeySignature(FileUtils.readFileToByteArray(sigFile));
-        key.setKeyName(FileUtils.readFileToByteArray(outfilename));
-        // Everything went well, delete the temporary files, otherwise leave them for debugging (they are always unique anyway)
-        privateFile.delete();
-        publicFile.delete();
-        context.delete();
-        outfilename.delete();
-        attestFile.delete();
-        sigFile.delete();
-        return key;
     }
 
     @Override
@@ -623,15 +487,6 @@ class TpmLinuxV20 extends TpmLinux {
         }
     }
 
-    private TPMA_NV getTpmaNvFromAttributes(Set<NVAttribute> attributes) {
-        List<TPMA_NV> nvAttributeList = new ArrayList<>();
-        for(NVAttribute attr : attributes) {
-            nvAttributeList.add(NvAttributeMapper.getMappedNvAttribute(attr));
-        }
-        return new TPMA_NV(nvAttributeList.toArray(new TPMA_NV[nvAttributeList.size()]));
-    }
-
-
     @Override
     public void nvRelease(byte[] ownerAuth, int index) throws IOException, Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
@@ -675,59 +530,15 @@ class TpmLinuxV20 extends TpmLinux {
         return index == nvPub.nvPublic.nvIndex.handle;
     }
 
-    private PCR_ReadResponse getPcrsRequired(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) throws IOException {
-        PCR_ReadResponse pcrsRequired = null;
-        for(TPMS_PCR_SELECTION pcrSelection: getTpmsPcrSelections(pcrBanks, pcrs)) {
-            PCR_ReadResponse pcrsNew = tpmNew.PCR_Read(new TPMS_PCR_SELECTION[]{pcrSelection});
-            if( pcrsRequired == null) {
-                pcrsRequired = pcrsNew;
-            } else {
-                pcrsRequired.pcrSelectionOut = concatPcrSelect(pcrsRequired.pcrSelectionOut, pcrsNew.pcrSelectionOut);
-                pcrsRequired.pcrValues = concatDigest(pcrsRequired.pcrValues, pcrsNew.pcrValues);
-            }
-        }
-        return pcrsRequired;
-    }
-
-    private TPMS_PCR_SELECTION[] concatPcrSelect(TPMS_PCR_SELECTION[] blob1, TPMS_PCR_SELECTION[] blob2) {
-        TPMS_PCR_SELECTION[] toReturn = new TPMS_PCR_SELECTION[blob1.length + blob2.length];
-        int i = 0;
-        for(TPMS_PCR_SELECTION digest: blob1) {
-            toReturn[i] = digest;
-            i++;
-        }
-        for(TPMS_PCR_SELECTION digest: blob2) {
-            toReturn[i] = digest;
-            i++;
-        }
-        return toReturn;
-    }
-
-    private TPM2B_DIGEST[] concatDigest(TPM2B_DIGEST[] blob1, TPM2B_DIGEST[] blob2) {
-        TPM2B_DIGEST[] toReturn = new TPM2B_DIGEST[blob1.length + blob2.length];
-        int i = 0;
-        for(TPM2B_DIGEST digest: blob1) {
-            toReturn[i] = digest;
-            i++;
-        }
-        for(TPM2B_DIGEST digest: blob2) {
-            toReturn[i] = digest;
-            i++;
-        }
-        return toReturn;
-    }
-
     @Override
     public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikBlob, byte[] aikAuth, byte[] nonce)
             throws IOException, Tpm.TpmException {
         byte[] pcrsResult = getPcrs(pcrBanks, pcrs);
-        System.out.println("PcrList: " + TpmUtils.byteArrayToHexString(pcrsResult));
 
         TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
         TPM_HANDLE aHandle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
         aHandle.AuthValue = aikAuth;
         QuoteResponse quote = tpmNew.Quote(aHandle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
-        System.out.println("Quote: " + quote.toString());
 
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
         return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);

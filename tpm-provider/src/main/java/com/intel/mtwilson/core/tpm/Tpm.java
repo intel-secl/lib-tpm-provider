@@ -24,6 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.SystemUtils;
+import tss.TpmDeviceLinux;
 
 /**
  * <h1>Tpm</h1>
@@ -278,7 +279,7 @@ public abstract class Tpm {
                 }
             } else {
                 if(Files.exists(Paths.get("/usr", "local", "sbin", "tpm2_takeownership"))) {
-                    return new TpmLinuxV20("/usr/local/sbin");
+                    return new TpmLinuxV20("/usr/local/sbin", new TpmDeviceLinux());
                 } else {
                     throw new IllegalStateException("Could not automatically find TPM 2.0 Tools");
                 }
@@ -320,7 +321,7 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionLinux())) {
                 return new TpmLinuxV12(tpmToolsPath);
             } else {
-                return new TpmLinuxV20(tpmToolsPath);
+                return new TpmLinuxV20(tpmToolsPath, new TpmDeviceLinux());
             }
         } else if (SystemUtils.IS_OS_WINDOWS) {
             if (V12.equals(detectTpmVersionWindows())) {
@@ -497,42 +498,6 @@ public abstract class Tpm {
      * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
      */
     public abstract byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest) throws IOException, TpmException;
-
-    /**
-     * Enum that specifies whether a key is for BINDING or SIGNING
-     */
-    public static enum KeyType {
-
-        /**
-         * Indicates Key is for binding
-         */
-        BIND,
-        /**
-         * Indicates Key is for signing
-         */
-        SIGN
-    }
-
-    /**
-     * <p>
-     * Create and Certify a new Asymmetric keypair. The key's usage can be declared
-     * for SIGNING or BINDING. The new key derives from the AIK, so it is important that one is 
-     * created with {@link #collateIdentityRequest(byte[], byte[], java.security.PublicKey) } first before calling this function.
-     * </p>
-     *
-     * @param keyType enum value that indicates what type of key to create and
-     * certify. Can be BINDING or SIGNING
-     * @param keyAuth key authorization blob to protect the key with
-     * @param aikAuth Attestation Identity Key authorization blob which is
-     * required to use the AIK to derive the new key
-     * @return a CertifiedKey object, containing the keymod, keyblob, keysig,
-     * and key data;
-     * @throws java.io.IOException if there was an error executing the command
-     * line Tpm Tools
-     * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
-     */
-    public abstract CertifiedKey createAndCertifyKey(KeyType keyType, byte[] keyAuth, byte[] aikAuth)
-            throws IOException, TpmException;
 
     /**
      * <p>
