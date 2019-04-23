@@ -268,7 +268,7 @@ class TpmLinuxV20 extends TpmLinux {
         }
     }
 
-    private void clearAkHandle(byte[] ownerAuth) throws IOException, Tpm.TpmException {
+    private void clearAkHandle(byte[] ownerAuth) throws Tpm.TpmException {
         int index = findKeyHandle("0x81018000");
         if (index != 0) {
             TPM_HANDLE handle = TPM_HANDLE.from(TPM_RH.OWNER);
@@ -521,9 +521,14 @@ class TpmLinuxV20 extends TpmLinux {
         byte[] pcrsResult = getPcrs(pcrBanks, pcrs);
 
         TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
-        TPM_HANDLE handle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
-        handle.AuthValue = aikAuth;
-        QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
+        TPM_HANDLE aHandle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
+        aHandle.AuthValue = aikAuth;
+        QuoteResponse quote;
+        try {
+            quote = tpmNew.Quote(aHandle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
+        } catch (tss.TpmException e) {
+            throw new Tpm.TpmException("TpmLinuxV20.getQuote failed to generate quote");
+        }
 
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
         return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);

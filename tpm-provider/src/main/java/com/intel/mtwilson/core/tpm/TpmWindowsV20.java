@@ -41,8 +41,15 @@ class TpmWindowsV20 extends TpmWindows {
         tpmNew._setDevice(new TpmDeviceTbs());
     }
 
-    private int findKeyHandle(String mask) throws Tpm.TpmException, IOException {
-        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+    private int findKeyHandle(String mask) throws Tpm.TpmException {
+        GetCapabilityResponse gcResponse;
+        try {
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES,
+                    TPM_HT.PERSISTENT.toInt() << 24, 16);
+        } catch(tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
+            throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
+        }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
 
         Pattern p = Pattern.compile(mask);
@@ -56,7 +63,17 @@ class TpmWindowsV20 extends TpmWindows {
         return 0;
     }
 
-    private int findEkHandle() throws IOException, Tpm.TpmException {
+    private int findAikHandle() throws Tpm.TpmException {
+        for (int i = 0x81018; i < 0x81020; i++) {
+            int index = findKeyHandle(String.format("0x%05x...", i));
+            if (index != 0) {
+                return index;
+            }
+        }
+        throw new Tpm.TpmException("TpmLinuxV20.findAk could not find Ak");
+    }
+
+    private int findEkHandle() throws Tpm.TpmException {
         int index = findKeyHandle("0x810100..");
         if (index != 0) {
             return index;
@@ -64,8 +81,16 @@ class TpmWindowsV20 extends TpmWindows {
             throw new Tpm.TpmException("TpmLinuxV20.findEk could not find Ek");
         }
     }
-    private int getNextUsableHandle() throws Tpm.TpmException, IOException {
-        GetCapabilityResponse gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES, TPM_HT.PERSISTENT.toInt() << 24, 16);
+
+    private int getNextUsableHandle() throws Tpm.TpmException {
+        GetCapabilityResponse gcResponse;
+        try {
+            gcResponse = tpmNew.GetCapability(TPM_CAP.HANDLES,
+                    TPM_HT.PERSISTENT.toInt() << 24, 16);
+        } catch(tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.findKeyHandle failed to list key handles");
+            throw new Tpm.TpmException("TpmLinuxV20.findKeyHandle failed to list key handles");
+        }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
 
         int index = 0x81010000;
@@ -84,7 +109,6 @@ class TpmWindowsV20 extends TpmWindows {
         throw new Tpm.TpmException("TpmLinuxV20.getNextUsableHandle no usable persistent handles are available");
     }
 
-
     private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException, IOException {
         int ekHandle = getNextUsableHandle();
 
@@ -102,23 +126,25 @@ class TpmWindowsV20 extends TpmWindows {
                         new TPMS_NULL_ASYM_SCHEME(),2048,0),
                 new TPM2B_PUBLIC_KEY_RSA());
 
-        TPM_HANDLE handle;
-        CreatePrimaryResponse cpResponse;
-        handle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-        handle.AuthValue = endorsePass;
-        cpResponse = tpmNew.CreatePrimary(handle,
-                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+        try {
+            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+            eHandle.AuthValue = endorsePass;
+            CreatePrimaryResponse cpResponse = tpmNew.CreatePrimary(eHandle,
+                    new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
 
-        handle = TPM_HANDLE.from(TPM_RH.OWNER);
-        handle.AuthValue = ownerAuth;
-        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
-        ehandle.AuthValue = endorsePass;
-        tpmNew.EvictControl(handle, cpResponse.handle,
-                ehandle);
-        tpmNew.FlushContext(cpResponse.handle);
+            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+            oHandle.AuthValue = ownerAuth;
+            tpmNew.EvictControl(oHandle, cpResponse.handle,
+                    TPM_HANDLE.from(ekHandle));
+
+            tpmNew.FlushContext(cpResponse.handle);
+        } catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.createEk failed to create ek");
+            throw new Tpm.TpmException("TpmLinuxV20.createEk failed to create ek");
+        }
+
         return ekHandle;
     }
-
 
     private int findOrCreateEk(byte[] ownerAuth, byte[] endorseAuth) throws Tpm.TpmException, IOException {
         try {
@@ -128,73 +154,79 @@ class TpmWindowsV20 extends TpmWindows {
         }
     }
 
-    private void clearAkHandle(byte[] ownerAuth) throws IOException, Tpm.TpmException {
+    private void clearAkHandle(byte[] ownerAuth) throws Tpm.TpmException {
         int index = findKeyHandle("0x81018000");
         if (index != 0) {
 
-            TPM_HANDLE handle = TPM_HANDLE.from(TPM_RH.OWNER);
-            handle.AuthValue = ownerAuth;
-            tpmNew.EvictControl(handle, TPM_HANDLE.from(0x81018000),
-                    TPM_HANDLE.from(0x81018000));
+            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+            oHandle.AuthValue = ownerAuth;
+            try {
+                tpmNew.EvictControl(oHandle, TPM_HANDLE.from(index),
+                        TPM_HANDLE.from(index));
+            } catch (tss.TpmException e) {
+                LOG.debug("TpmLinuxV20.clearAkHandle failed to clear ak handle");
+                throw new Tpm.TpmException("TpmLinuxV20.clearAkHandle failed to clear ak handle");
+            }
         }
     }
 
-
     @Override
-    public IdentityRequest collateIdentityRequest(byte[] ownerAuth, byte[] keyAuth, PublicKey pcaPubKey) throws IOException, TpmException {
+    public IdentityRequest collateIdentityRequest(byte[] ownerAuth, byte[] keyAuth, PublicKey pcaPubKey) throws IOException, Tpm.TpmException {
         int ekHandle = findOrCreateEk(ownerAuth, ownerAuth);
         LOG.info("TpmLinuxV20.collateIdentityRequest using EkHandle: {}", String.format("0x%08x", ekHandle));
         // existing akHandle so we can use it
         clearAkHandle(ownerAuth);
 
-        byte[] nonceCaller = TpmUtils.createRandomBytes(20);
-        // Start a policy session to be used with ActivateCredential()
-        StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
-                nonceCaller, new byte[0], TPM_SE.POLICY,
-                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
-
-        TPM_HANDLE endorseHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-        endorseHandle.AuthValue = ownerAuth;
-        // Apply the policy necessary to authorize an EK on Windows
-        PolicySecretResponse psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
-                new byte[0], new byte[0], new byte[0], 0);
-
-        TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
-                new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.sign,
-                        TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
-                new byte[0],
-                new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.NULL, 0, TPM_ALG_ID.NULL),
-                        new TPMS_SIG_SCHEME_RSASSA(TPM_ALG_ID.SHA256),2048,65537),
-                new TPM2B_PUBLIC_KEY_RSA());
-
-        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
-        ehandle.AuthValue = ownerAuth;
-        CreateResponse cResponse = tpmNew._withSession(sasResponse.handle).Create(ehandle,
-                new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-        tpmNew.FlushContext(sasResponse.handle);
-
-        // Start a policy session to be used with ActivateCredential()
-        sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
-                nonceCaller, new byte[0], TPM_SE.POLICY,
-                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
-
-        // Apply the policy necessary to authorize an EK on Windows
-        psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
-                new byte[0], new byte[0], new byte[0], 0);
-
-        TPM_HANDLE loadHandle = tpmNew._withSession(sasResponse.handle).Load(ehandle, cResponse.outPrivate, cResponse.outPublic);
-        tpmNew.FlushContext(sasResponse.handle);
-
-        TPM_HANDLE ohandle = TPM_HANDLE.from(TPM_RH.OWNER);
-        ohandle.AuthValue = ownerAuth;
+        ReadPublicResponse akPub;
         byte[] persistent = new byte[] { (byte) 0x81, 0x01, (byte) 0x80, 0x00 };
-        TPM_HANDLE ahandle = TPM_HANDLE.fromTpm(persistent);
-        ahandle.AuthValue = keyAuth;
-        tpmNew.EvictControl(ohandle, loadHandle,
-                ahandle);
-        tpmNew.FlushContext(loadHandle);
+        try {
+            byte[] nonceCaller = TpmUtils.createRandomBytes(20);
+            StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                    nonceCaller, new byte[0], TPM_SE.POLICY,
+                    TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
 
-        ReadPublicResponse akPub = tpmNew.ReadPublic(ahandle);
+            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+            eHandle.AuthValue = ownerAuth;
+            tpmNew.PolicySecret(eHandle, sasResponse.handle,
+                    new byte[0], new byte[0], new byte[0], 0);
+
+            TPMS_SENSITIVE_CREATE inSensitive = new TPMS_SENSITIVE_CREATE(keyAuth, new byte[0]);
+
+            TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
+                    new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.sign,
+                            TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
+                    new byte[0],
+                    new TPMS_RSA_PARMS(TPMT_SYM_DEF_OBJECT.nullObject(),
+                            new TPMS_SIG_SCHEME_RSASSA(TPM_ALG_ID.SHA256),2048,65537),
+                    new TPM2B_PUBLIC_KEY_RSA());
+
+            CreateResponse cResponse = tpmNew._withSession(sasResponse.handle).Create(TPM_HANDLE.from(ekHandle),
+                    inSensitive, inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
+            tpmNew.FlushContext(sasResponse.handle);
+
+            sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                    nonceCaller, new byte[0], TPM_SE.POLICY,
+                    TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
+
+            tpmNew.PolicySecret(eHandle, sasResponse.handle,
+                    new byte[0], new byte[0], new byte[0], 0);
+
+            TPM_HANDLE loadHandle = tpmNew._withSession(sasResponse.handle).Load(TPM_HANDLE.from(ekHandle),
+                    cResponse.outPrivate, cResponse.outPublic);
+            tpmNew.FlushContext(sasResponse.handle);
+
+            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+            oHandle.AuthValue = ownerAuth;
+            loadHandle.AuthValue = inSensitive.userAuth;
+            tpmNew.EvictControl(oHandle, loadHandle,
+                    TPM_HANDLE.fromTpm(persistent));
+            tpmNew.FlushContext(loadHandle);
+
+            akPub = tpmNew.ReadPublic(TPM_HANDLE.fromTpm(persistent));
+        } catch (tss.TpmException e) {
+            LOG.debug("TpmModule20.collateIdentityRequest failed to create ak");
+            throw new Tpm.TpmException("TpmModule20.collateIdentityRequest failed to create ak");
+        }
 
         // TPM 2.0 identityRequest and aikpub are used as the same
         IdentityRequest newId = new IdentityRequest(this.getTpmVersion(),
@@ -203,49 +235,40 @@ class TpmWindowsV20 extends TpmWindows {
         return newId;
     }
 
-    private int findAikHandle() throws Tpm.TpmException, IOException {
-        for (int i = 0x81018; i < 0x81020; i++) {
-            int index = findKeyHandle(String.format("0x%05x...", i));
-            if (index != 0) {
-                return index;
-            }
-        }
-        throw new Tpm.TpmException("TpmLinuxV20.findAk could not find Ak");
-    }
-
     @Override
     public byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest)
-            throws IOException, TpmException {
+            throws IOException, Tpm.TpmException {
         int akHandle = findAikHandle();
         int ekHandle = findEkHandle();
         LOG.debug(" AIK Handle : {}", akHandle);
 
-        byte[] nonceCaller = TpmUtils.createRandomBytes(20);
-        // Start a policy session to be used with ActivateCredential()
-        StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
-                nonceCaller, new byte[0], TPM_SE.POLICY,
-                TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
+        byte[] recoveredSecret;
+        try {
+            byte[] nonceCaller = TpmUtils.createRandomBytes(20);
+            StartAuthSessionResponse sasResponse = tpmNew.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
+                    nonceCaller, new byte[0], TPM_SE.POLICY,
+                    TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
 
-        TPM_HANDLE endorseHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-        endorseHandle.AuthValue = ownerAuth;
-        // Apply the policy necessary to authorize an EK on Windows
-        PolicySecretResponse psResp = tpmNew.PolicySecret(endorseHandle, sasResponse.handle,
-                new byte[0], new byte[0], new byte[0], 0);
+            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+            eHandle.AuthValue = ownerAuth;
+            tpmNew.PolicySecret(eHandle, sasResponse.handle,
+                    new byte[0], new byte[0], new byte[0], 0);
 
-        byte[] credential = proofRequest.getCredential();
-        byte[] secret = proofRequest.getSecret();
-        byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
-        byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
-        secret = Arrays.copyOfRange(secret, 2, 2 + 256);
-        TPMS_ID_OBJECT credentialBlob = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
+            byte[] credential = proofRequest.getCredential();
+            byte[] secret = proofRequest.getSecret();
+            byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
+            byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
+            secret = Arrays.copyOfRange(secret, 2, 2 + 256);
+            TPMS_ID_OBJECT credentialBlob = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
 
-        TPM_HANDLE ehandle = TPM_HANDLE.from(ekHandle);
-        ehandle.AuthValue = ownerAuth;
-        TPM_HANDLE ahandle = TPM_HANDLE.from(akHandle);
-        ahandle.AuthValue = ownerAuth;
-        byte[] recoveredSecret = tpmNew._withSessions(TPM_HANDLE.pwSession(keyAuth),
-                sasResponse.handle).ActivateCredential(ahandle, ehandle, credentialBlob, secret);
-        tpmNew.FlushContext(sasResponse.handle);
+            TPM_HANDLE aHandle = TPM_HANDLE.from(akHandle);
+            aHandle.AuthValue = keyAuth;
+            recoveredSecret = tpmNew._withSessions(TPM_HANDLE.pwSession(new byte[0]),
+                    sasResponse.handle).ActivateCredential(aHandle, TPM_HANDLE.from(ekHandle), credentialBlob, secret);
+            tpmNew.FlushContext(sasResponse.handle);
+        } catch (tss.TpmException e) {
+            throw new Tpm.TpmException("TpmLinuxV20.activateIdentity failed to activate credential");
+        }
 
         try {
             return Utils.decryptSymCaAttestation(recoveredSecret, proofRequest.getSymBlob());
@@ -357,7 +380,12 @@ class TpmWindowsV20 extends TpmWindows {
         TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
         TPM_HANDLE handle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
         handle.AuthValue = aikAuth;
-        QuoteResponse quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
+        QuoteResponse quote;
+        try {
+            quote = tpmNew.Quote(handle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
+        } catch (tss.TpmException e) {
+            throw new Tpm.TpmException("TpmLinuxV20.getQuote failed to generate quote");
+        }
 
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
         return new TpmQuote(System.currentTimeMillis(), pcrBanks, combined);
