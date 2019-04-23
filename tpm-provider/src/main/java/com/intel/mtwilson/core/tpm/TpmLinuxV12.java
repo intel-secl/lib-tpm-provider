@@ -247,50 +247,6 @@ class TpmLinuxV12 extends TpmLinux {
     }
 
     @Override
-    public CertifiedKey createAndCertifyKey(KeyType keyType, byte[] keyAuth, byte[] aikAuth) throws IOException, TpmException {
-        /*
-         * Create Key (sign or bind)
-         * NIARL_TPM_Module -mode 8 -key_type <"sign" | "bind"> -key_auth <40 char hex blob> -key_index <integer index>
-         * return: <modulus> <key blob>
-         */
-        if (!(keyType == KeyType.SIGN || keyType == KeyType.BIND)) {
-            throw new TpmException("TpmLinuxV12.createAndCertifyKey: key type parameter must be \"sign\" or \"bind\".");
-        }
-        int keyIndex = keyType == KeyType.BIND ? BINDING_KEY_INDEX : SIGNING_KEY_INDEX;
-        String argument = "-key_type " + keyType + " -ckey_auth " + Utils.byteArrayToHexString(keyAuth) + " -ckey_index "
-                + BINDING_KEY_INDEX + " -aik_auth " + Utils.byteArrayToHexString(aikAuth) + " -aik_index " + AIK_INDEX;
-        LOG.debug(argument);
-        TpmTool tool = new TpmToolNiarl(getTpmToolsPath(), 25, false);
-        tool.addArgument("-key_type");
-        tool.addArgument(keyType.toString().toLowerCase());
-        tool.addArgument("-ckey_auth");
-        tool.addArgument(TpmUtils.byteArrayToHexString(keyAuth));
-        tool.addArgument("-ckey_index");
-        tool.addArgument(Integer.toString(keyIndex));
-        tool.addArgument("-aik_auth");
-        tool.addArgument(TpmUtils.byteArrayToHexString(aikAuth));
-        tool.addArgument("-aik_index");
-        tool.addArgument(Integer.toString(AIK_INDEX));
-        CommandLineResult result = tool.execute();
-        if (result.getReturnCode() != 0) {
-            throw new TpmException("TpmLinuxV12.createCertifyKey returned nonzero error", result.getReturnCode());
-        } else {
-            LOG.debug("Call to certifyKey was successful");
-        }
-        if (result.getLastLineTokenCount() < 4) {
-            LOG.debug("TpmLinuxV12.createCertifyKey expected at least 4 results. Received {}", result.getLastLineTokenCount());
-            throw new TpmException("TpmLinuxV12.createCertifyKey expected at least 4 results. Received" + result.getLastLineTokenCount());
-        }
-
-        LOG.debug("Modulus output: {}", result.getLastLineToken(0));
-        LOG.debug("Blob output: {}", result.getLastLineToken(1));
-        LOG.debug("Certify key signature: {}", result.getLastLineToken(2));
-        LOG.debug("Certify key data: {}", result.getLastLineToken(3));
-        return new CertifiedKey(Utils.hexStringToByteArray(result.getLastLineToken(0)), Utils.hexStringToByteArray(result.getLastLineToken(1)),
-                Utils.hexStringToByteArray(result.getLastLineToken(2)), Utils.hexStringToByteArray(result.getLastLineToken(3)));
-    }
-
-    @Override
     public void setAssetTag(byte[] ownerAuth, byte[] assetTagHash) throws IOException, TpmException {
         int index = getAssetTagIndex();
         byte[] randPasswd = Utils.randomBytes(20);

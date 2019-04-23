@@ -13,12 +13,14 @@ import com.intel.mtwilson.core.tpm.Tpm.CredentialType;
 import com.intel.mtwilson.core.tpm.Tpm.PcrBank;
 import com.intel.mtwilson.core.tpm.Tpm.NVAttribute;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.cert.X509Certificate;
 import java.util.Set;
 import com.intel.kunit.annotations.*;
 import com.intel.kunit.annotations.Integration.*;
+import com.intel.mtwilson.core.tpm.util.Utils;
 import gov.niarl.his.privacyca.TpmUtils;
 import java.lang.reflect.Type;
 import java.math.BigInteger;
@@ -51,6 +53,7 @@ import org.apache.commons.io.FileUtils;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
 /**
  *
@@ -355,7 +358,6 @@ public class TpmIntegrationTest {
      * Tpm.collateIdentityRequest()
      * PrivacyCA.processIdentityRequest()
      * Tpm.activateIdentity()
-     * Tpm.createAndCertifyKey()
      * Tpm.getQuote
      * </pre>
      * You should test getModuleLog() and set/getAssetTag() separately, but onlY AFTER running this test.
@@ -426,15 +428,10 @@ public class TpmIntegrationTest {
         System.out.println("TPM: Activating Identity Proof Request part 2...");
         byte[] step4 = tpm.activateIdentity(ownerAuth, aikSecret, step3);
         assertThat(step4).isEqualTo(aikCert.getEncoded());
-        System.out.println("Creating BINDING key...");
-        CertifiedKey bindingKey = tpm.createAndCertifyKey(Tpm.KeyType.BIND, keyAuth, aikSecret);
-        assertThat(bindingKey).isNotNull();
-        System.out.println("Creating SIGNING key...");
-        CertifiedKey signingKey = tpm.createAndCertifyKey(Tpm.KeyType.SIGN, keyAuth, aikSecret);
-        assertThat(signingKey).isNotNull();
         byte[] nonce = aikSecret;
         System.out.println("Getting Tpm Quote...");
-        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), aikSecret, nonce);
+        // TODO: replace null with aiksecret
+        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), ownerAuth, nonce);
         assertThat(quote).isNotNull();
         assertThat(quote.getPcrBanks()).isEqualTo(tpm.getPcrBanks());
         assertThat(quote.getQuoteData()).isNotEmpty();
@@ -448,7 +445,6 @@ public class TpmIntegrationTest {
      * Tpm.collateIdentityRequest()
      * PrivacyCA.processIdentityRequest()
      * Tpm.activateIdentity()
-     * Tpm.createAndCertifyKey()
      * Tpm.getQuote
      * </pre>
      * You should set/getAssetTag() separately, but onlY AFTER running this test.
@@ -489,7 +485,8 @@ public class TpmIntegrationTest {
         assertThat(a2).isEqualTo(aikCert.getEncoded());
         byte[] nonce = aikSecret;
         System.out.println("Getting quote...");
-        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), aikSecret, nonce);
+        // TODO: replace null with aiksecret
+        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), null, nonce);
         assertThat(quote).isNotNull();
         assertThat(quote.getPcrBanks()).isEqualTo(tpm.getPcrBanks());
         assertThat(quote.getQuoteData()).isNotEmpty();

@@ -8,6 +8,10 @@ package com.intel.mtwilson.core.tpm.util;
 import com.intel.mtwilson.core.tpm.Tpm;
 import tss.tpm.TPMA_NV;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
 public class NvAttributeMapper {
     public static TPMA_NV getMappedNvAttribute(Tpm.NVAttribute attr) {
         TPMA_NV._N tpmNvAttribute = TPMA_NV._N.valueOf(attr.name());
@@ -111,4 +115,13 @@ public class NvAttributeMapper {
         }
         return nvAttribute;
     }
+
+    public static TPMA_NV getTpmaNvFromAttributes(Set<Tpm.NVAttribute> attributes) {
+        List<TPMA_NV> nvAttributeList = new ArrayList<>();
+        for(Tpm.NVAttribute attr : attributes) {
+            nvAttributeList.add(NvAttributeMapper.getMappedNvAttribute(attr));
+        }
+        return new TPMA_NV(nvAttributeList.toArray(new TPMA_NV[nvAttributeList.size()]));
+    }
+
 }

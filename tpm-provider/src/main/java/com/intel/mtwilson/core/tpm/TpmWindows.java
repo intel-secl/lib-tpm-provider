@@ -121,69 +121,6 @@ abstract class TpmWindows extends Tpm {
     }
 
     @Override
-    public CertifiedKey createAndCertifyKey(KeyType keyType, byte[] keyAuth, byte[] aikAuth) throws IOException, TpmException {
-        if (keyType == null) {
-            LOG.debug("TpmWindows.createAndCertifyKey keyType is null");
-            throw new IllegalArgumentException("TpmWindows.createAndCertifyKey keyType is null");
-        }
-        if (keyAuth == null) {
-            LOG.debug("TpmWindows.createAndCertifyKey keyAuth is null");
-            throw new IllegalArgumentException("TpmWindows.createAndCertifyKey keyAuth is null");
-        }
-        String methodName;
-        switch (keyType) {
-            case BIND:
-                methodName = "createbindingkey";
-                break;
-            case SIGN:
-                methodName = "createsigningkey";
-                break;
-            default:
-                throw new IllegalArgumentException("TpmWindows.createAndCertifyKey keyType is not BIND or SIGN");
-        }
-        LOG.info("UserName : {}", System.getProperty("user.name"));
-        TpmTool createKey = new TpmToolWindows(getTpmToolsPath(), methodName);
-        createKey.addArgument(keyType.toString());
-        createKey.addArgument(TpmUtils.byteArrayToHexString(keyAuth));
-        CommandLineResult result = createKey.execute();
-        if (result.getReturnCode() != 0) {
-            throw new TpmException("TpmWindows.createAndCertifyKey " + methodName + " returned nonzero error", result.getReturnCode());
-        }
-        if (result.getLastLineTokenCount() < 2) {
-            LOG.debug("TpmWindows.createAndCertifyKey " + methodName + " expected at least 2 results. Received {}", result.getLastLineTokenCount());
-            throw new TpmException("TpmWindows.createAndCertifyKey " + methodName + " expected at least 2 results. Received " + result.getLastLineTokenCount());
-        }
-        LOG.info("TpmWindows.createAndCertifyKey call to {} was successful", methodName);
-        LOG.info("TpmWindows.createAndCertifyKey keymod byteArray: {}", TpmUtils.hexStringToByteArray(result.getLastLineToken(0)));
-        CertifiedKey key = new CertifiedKey();
-        key.setKeyModulus(TpmUtils.hexStringToByteArray(result.getLastLineToken(0)));
-        String aikName = KEY_NAME;
-        String exportFile = keyType + "keyattestation";
-        String nonce = Utils.byteArrayToHexString(Utils.randomBytes(20));
-        TpmTool getKeyAttestation = new TpmToolWindows(getTpmToolsPath(), "GetKeyAttestation");
-        getKeyAttestation.addArgument(keyType.toString());
-        getKeyAttestation.addArgument(aikName);
-        getKeyAttestation.addArgument(exportFile);
-        getKeyAttestation.addArgument(nonce);
-        getKeyAttestation.addArgument(TpmUtils.byteArrayToHexString(keyAuth));
-        getKeyAttestation.addArgument(TpmUtils.byteArrayToHexString(aikAuth));
-        result = getKeyAttestation.execute();
-        if (result.getReturnCode() != 0) {
-            throw new TpmException("TpmWindows.createAndCertifyKey GetKeyAttestation returned nonzero error", result.getReturnCode());
-        }
-        if (result.getLastLineTokenCount() < 3) {
-            LOG.debug("TpmWindows.createAndCertifyKey GetKeyAttestation exepcted at least 3 results. Received {}", result.getLastLineTokenCount());
-            throw new TpmException("TpmWindows.createAndCertifyKey GetKeyAttestation exepcted at least 3 results. Received " + result.getLastLineTokenCount());
-        }
-        LOG.info("TpmWindows.createAndCertifyKey Call to GetKeyAttestation was successful");
-        LOG.info("TpmWindows.createAndCertifyKey Result Count: {}", result.getLastLineTokenCount());
-        key.setKeyData(Utils.hexStringToByteArray(result.getLastLineToken(0)));
-        key.setKeySignature(Utils.hexStringToByteArray(result.getLastLineToken(1)));
-        key.setKeyBlob(Utils.hexStringToByteArray(result.getLastLineToken(2)));
-        return key;
-    }
-
-    @Override
     public void setAssetTag(byte[] ownerAuth, byte[] assetTagHash) throws IOException, TpmException {
         byte[] randPasswd = Utils.randomBytes(20);
         int index = getAssetTagIndex();
@@ -194,7 +131,7 @@ abstract class TpmWindows extends Tpm {
         } else {
             LOG.debug("TpmWindows.setAssetTag index does not exist, creating it...");
         }
-        nvDefine(ownerAuth, randPasswd, index, 32, EnumSet.of(NVAttribute.AUTHWRITE));
+        nvDefine(ownerAuth, randPasswd, index, 32, EnumSet.of(NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD));
         nvWrite(randPasswd, index, assetTagHash);
         LOG.debug("TpmWindows.setAssetTag provisioned asset tag");
     }
