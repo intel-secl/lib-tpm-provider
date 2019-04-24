@@ -4,7 +4,6 @@
  */
 package com.intel.mtwilson.core.tpm;
 
-import com.intel.mtwilson.core.tpm.model.CertifiedKey;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
@@ -25,6 +24,7 @@ import java.util.regex.Pattern;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.SystemUtils;
 import tss.TpmDeviceLinux;
+import tss.TpmDeviceTbs;
 
 /**
  * <h1>Tpm</h1>
@@ -278,17 +278,13 @@ public abstract class Tpm {
                     throw new IllegalStateException("Could not automatically find TPM 1.2 Tools");
                 }
             } else {
-                if(Files.exists(Paths.get("/usr", "local", "sbin", "tpm2_takeownership"))) {
-                    return new TpmLinuxV20("/usr/local/sbin", new TpmDeviceLinux());
-                } else {
-                    throw new IllegalStateException("Could not automatically find TPM 2.0 Tools");
-                }
+                return new TpmLinuxV20(new TpmDeviceLinux());
             }
         } else if (SystemUtils.IS_OS_WINDOWS) {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString());
             } else {
-                return new TpmWindowsV20(Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString());
+                return new TpmWindowsV20(new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");
@@ -321,13 +317,13 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionLinux())) {
                 return new TpmLinuxV12(tpmToolsPath);
             } else {
-                return new TpmLinuxV20(tpmToolsPath, new TpmDeviceLinux());
+                return new TpmLinuxV20(new TpmDeviceLinux());
             }
         } else if (SystemUtils.IS_OS_WINDOWS) {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(tpmToolsPath);
             } else {
-                return new TpmWindowsV20(tpmToolsPath);
+                return new TpmWindowsV20(new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");
