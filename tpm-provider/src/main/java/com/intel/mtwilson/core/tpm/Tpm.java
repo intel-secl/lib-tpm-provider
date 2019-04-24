@@ -321,7 +321,9 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString());
             } else {
-                return new TpmWindowsV20(new TpmDeviceTbs());
+                return new TpmWindowsV20(
+                        Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString(),
+                        new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");
@@ -360,7 +362,7 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(tpmToolsPath);
             } else {
-                return new TpmWindowsV20(new TpmDeviceTbs());
+                return new TpmWindowsV20(tpmToolsPath, new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");

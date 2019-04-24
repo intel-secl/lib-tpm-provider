@@ -40,6 +40,13 @@ abstract public class TpmV20 extends Tpm {
         tpm._setDevice(base);
     }
 
+    //TODO: Remove after implentation of getEK in windows
+    TpmV20(String tpmToolsPath, TpmDeviceBase base) {
+        super(tpmToolsPath);
+        tpm = new tss.Tpm();
+        tpm._setDevice(base);
+    }
+
     private boolean changeAuth(byte[] oldAuth, byte[] newAuth) {
         Set<TPM_HANDLE> handles = new HashSet<>(Arrays.asList(TPM_HANDLE.from(TPM_RH.OWNER),
                 TPM_HANDLE.from(TPM_RH.ENDORSEMENT), TPM_HANDLE.from(TPM_RH.LOCKOUT)));
@@ -113,7 +120,7 @@ abstract public class TpmV20 extends Tpm {
     }
 
     @Override
-    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException {
+    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
         if (credentialType != Tpm.CredentialType.EC) {
             throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
         }
