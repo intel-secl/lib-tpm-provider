@@ -109,7 +109,7 @@ class TpmWindowsV20 extends TpmWindows {
         throw new Tpm.TpmException("TpmLinuxV20.getNextUsableHandle no usable persistent handles are available");
     }
 
-    private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException, IOException {
+    private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException {
         int ekHandle = getNextUsableHandle();
 
         byte auth_policy[] = {
@@ -284,7 +284,7 @@ class TpmWindowsV20 extends TpmWindows {
     }
 
     @Override
-    public Set<Tpm.PcrBank> getPcrBanks() throws IOException, Tpm.TpmException {
+    public Set<Tpm.PcrBank> getPcrBanks() throws Tpm.TpmException {
         GetCapabilityResponse caps = tpmNew.GetCapability(TPM_CAP.ALGS, 0, TPM_ALG_ID.values().size());
         TPML_ALG_PROPERTY algs = (TPML_ALG_PROPERTY) (caps.capabilityData);
         Set<Tpm.PcrBank> pcrBanks = EnumSet.allOf(Tpm.PcrBank.class);
@@ -309,7 +309,7 @@ class TpmWindowsV20 extends TpmWindows {
     }
 
     @Override
-    public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws IOException, Tpm.TpmException {
+    public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
@@ -326,31 +326,50 @@ class TpmWindowsV20 extends TpmWindows {
     }
 
     @Override
-    public void nvRelease(byte[] ownerAuth, int index) throws IOException, Tpm.TpmException {
+    public void nvRelease(byte[] ownerAuth, int index) throws Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        tpmNew.NV_UndefineSpace(ownerHandle, nvIndex);
+        try {
+            tpmNew.NV_UndefineSpace(ownerHandle, nvIndex);
+        } catch (tss.TpmException e) {
+            if (!e.getMessage().contains("HANDLE")) {
+                LOG.debug("TpmLinuxV20.nvRelease returned error {}", e.getMessage());
+                throw new Tpm.TpmException("TpmLinuxV20.nvRelease returned error", e);
+            }
+        }
     }
 
     @Override
-    public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
+    public byte[] nvRead(byte[] authPassword, int index, int size) throws Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        return tpmNew.NV_Read(ownerHandle, nvIndex,  size,  0);
+        byte[] data;
+        try {
+            data = tpmNew.NV_Read(ownerHandle, nvIndex,  size,  0);
+        } catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.nvRead returned error {}", e.getMessage());
+            throw new TpmException("TpmLinuxV20.nvRead returned error ", e);
+        }
+        return data;
     }
 
     @Override
-    public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, Tpm.TpmException {
+    public void nvWrite(byte[] authPassword, int index, byte[] data) throws Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
-        tpmNew.NV_Write(ownerHandle, nvHandle, data,  0);
+        try {
+            tpmNew.NV_Write(ownerHandle, nvHandle, data,  0);
+        } catch (tss.TpmException e) {
+            LOG.debug("TpmLinuxV20.nvWrite returned error {}", e.getMessage());
+            throw new TpmException("TpmLinuxV20.nvWrite returned error ", e);
+        }
     }
 
     @Override
-    public boolean nvIndexExists(int index) throws IOException, Tpm.TpmException {
+    public boolean nvIndexExists(int index) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         NV_ReadPublicResponse nvPub;
         try {
@@ -359,8 +378,8 @@ class TpmWindowsV20 extends TpmWindows {
             if(e.getMessage().contains("HANDLE")) {
                 return false;
             } else {
-                LOG.debug("TpmLinuxV20.nvIndexExists could not find NV index {}", String.format("0x%08x", index));
-                throw new TpmException("TpmLinuxV20.nvIndexExists could not find NV index " + String.format("0x%08x", index));
+                LOG.debug("TpmLinuxV20.nvIndexExists returned error {}", e.getMessage());
+                throw new TpmException("TpmLinuxV20.nvIndexExists returned error", e);
             }
         }
         return index == nvPub.nvPublic.nvIndex.handle;
