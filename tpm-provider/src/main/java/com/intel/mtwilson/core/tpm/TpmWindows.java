@@ -122,7 +122,6 @@ abstract class TpmWindows extends Tpm {
 
     @Override
     public void setAssetTag(byte[] ownerAuth, byte[] assetTagHash) throws IOException, TpmException {
-        byte[] randPasswd = Utils.randomBytes(20);
         int index = getAssetTagIndex();
         if (nvIndexExists(index)) {
             LOG.debug("TpmWindows.setAssetTag index exists, releasing index...");
@@ -131,8 +130,8 @@ abstract class TpmWindows extends Tpm {
         } else {
             LOG.debug("TpmWindows.setAssetTag index does not exist, creating it...");
         }
-        nvDefine(ownerAuth, randPasswd, index, 32, EnumSet.of(NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD));
-        nvWrite(randPasswd, index, assetTagHash);
+        nvDefine(ownerAuth, ownerAuth, index, 32, EnumSet.of(NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD));
+        nvWrite(ownerAuth, index, assetTagHash);
         LOG.debug("TpmWindows.setAssetTag provisioned asset tag");
     }
 
