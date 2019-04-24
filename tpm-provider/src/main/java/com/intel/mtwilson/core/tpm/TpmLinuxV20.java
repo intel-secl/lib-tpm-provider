@@ -563,6 +563,7 @@ class TpmLinuxV20 extends TpmLinux {
 
     private TPMS_PCR_SELECTION[] getTpmsPcrToQuoteSelections(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) {
         int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
+        Arrays.sort(pcrLists);
         List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
         for(TPM_ALG_ID alg : PcrBanksMapper.getMappedPcrBanks(pcrBanks)) {
             selectedPcrs.add(new TPMS_PCR_SELECTION(alg, pcrLists));
@@ -572,6 +573,7 @@ class TpmLinuxV20 extends TpmLinux {
 
     private TPMS_PCR_SELECTION[] getTpmsPcrSelections(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) {
         int[] pcrLists = pcrs.stream().map(Pcr::toInt).mapToInt(i->i).toArray();
+        Arrays.sort(pcrLists);
         List<TPMS_PCR_SELECTION> selectedPcrs = new ArrayList<>();
         for(TPM_ALG_ID alg : PcrBanksMapper.getMappedPcrBanks(pcrBanks)) {
             if(pcrLists.length < 8) {
