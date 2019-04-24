@@ -12,8 +12,8 @@ import java.io.IOException;
  * @author dczech
  */
 class TpmWindowsV20 extends TpmV20 {
-    TpmWindowsV20(TpmDeviceBase base) {
-        super(base);
+    TpmWindowsV20(String tpmToolsPath, TpmDeviceBase base) {
+        super(tpmToolsPath, base);
     }
 
     @Override
@@ -32,12 +32,17 @@ class TpmWindowsV20 extends TpmV20 {
     }
 
     @Override
+    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
+        return new TpmWindowsV12(super.getTpmToolsPath()).getCredential(ownerAuth, credentialType);
+    }
+
+    @Override
     public String getModuleLog() throws IOException, TpmException {
-        return new TpmWindowsV12(null).getModuleLog();
+        return new TpmWindowsV12(super.getTpmToolsPath()).getModuleLog();
     }
 
     @Override
     public String getTcbMeasurement() throws IOException, TpmException {
-        return new TpmWindowsV12(null).getTcbMeasurement();
+        return new TpmWindowsV12(super.getTpmToolsPath()).getTcbMeasurement();
     }
 }
