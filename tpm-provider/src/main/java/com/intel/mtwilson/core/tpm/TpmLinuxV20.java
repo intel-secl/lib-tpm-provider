@@ -147,11 +147,11 @@ class TpmLinuxV20 extends TpmLinux {
         }
         int part1 = credentialBlob.length/2;
         int part2 = credentialBlob.length - part1;
-        nvDefine(ownerAuth, ownerAuth, getECIndex(), part1, NVAttribute.AUTHREAD, NVAttribute.OWNERWRITE, NVAttribute.OWNERREAD);
+        nvDefine(ownerAuth, ownerAuth, getECIndex(), part1, NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD);
         byte[] part1Buf = Arrays.copyOfRange(credentialBlob, 0, part1);
         byte[] part2Buf = Arrays.copyOfRange(credentialBlob, part1, credentialBlob.length);
         nvWrite(ownerAuth, getECIndex(), part1Buf);
-        nvDefine(ownerAuth, ownerAuth, getECIndex() + 1, part2, NVAttribute.AUTHREAD, NVAttribute.OWNERWRITE, NVAttribute.OWNERREAD);
+        nvDefine(ownerAuth, ownerAuth, getECIndex() + 1, part2, NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD);
         nvWrite(ownerAuth, getECIndex()+1, part2Buf);
     }
 
@@ -405,8 +405,7 @@ class TpmLinuxV20 extends TpmLinux {
         } else {
             LOG.debug("TpmLinuxV20.setAssetTag index does not exist, creating it...");
         }
-        nvDefine(ownerAuth, ownerAuth, index, 32, NVAttribute.AUTHREAD, NVAttribute.OWNERWRITE, NVAttribute.OWNERREAD);
-
+        nvDefine(ownerAuth, ownerAuth, index, 32, NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD);
         nvWrite(ownerAuth, index, assetTagHash);
         LOG.debug("TpmLinuxV20.setAssetTag successfully provisioned asset tag");
     }
@@ -457,15 +456,12 @@ class TpmLinuxV20 extends TpmLinux {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
-        nvHandle.AuthValue = indexPassword;
-        TPM_ALG_ID algorithm = TPM_ALG_ID.SHA256;
         TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
-        byte[] authPolicy = new byte[0];
-        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, algorithm, nvAttributes, authPolicy, size);
+        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, TPM_ALG_ID.SHA256, nvAttributes, new byte[0], size);
         try {
-            tpmNew.NV_DefineSpace(ownerHandle, ownerAuth, nvPub);
+            tpmNew.NV_DefineSpace(ownerHandle, indexPassword, nvPub);
         } catch (tss.TpmException e) {
-            if (!e.getMessage().contains("succeeded")) {
+            if (!e.getMessage().contains("NV_DEFINED")) {
                 LOG.debug("TpmLinuxV20.nvDefine returned error {}", e.getMessage());
                 throw new Tpm.TpmException("TpmLinuxV20.nvDefine returned error", e);
             }
@@ -477,24 +473,22 @@ class TpmLinuxV20 extends TpmLinux {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        tpmNew._allowErrors().NV_UndefineSpace(ownerHandle, nvIndex);
+        tpmNew.NV_UndefineSpace(ownerHandle, nvIndex);
     }
 
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        nvIndex.AuthValue = authPassword;
         return tpmNew.NV_Read(ownerHandle, nvIndex,  size,  0);
     }
 
     @Override
     public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
-        nvHandle.AuthValue = authPassword;
         tpmNew.NV_Write(ownerHandle, nvHandle, data,  0);
     }
 

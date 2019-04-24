@@ -308,21 +308,17 @@ class TpmWindowsV20 extends TpmWindows {
         return "2.0";
     }
 
-
     @Override
     public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<NVAttribute> attributes) throws IOException, Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
-        nvHandle.AuthValue = indexPassword;
-        TPM_ALG_ID algorithm = TPM_ALG_ID.SHA256;
         TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
-        byte[] authPolicy = new byte[0];
-        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, algorithm, nvAttributes, authPolicy, size);
+        TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, TPM_ALG_ID.SHA256, nvAttributes, new byte[0], size);
         try {
-            tpmNew.NV_DefineSpace(ownerHandle, ownerAuth, nvPub);
+            tpmNew.NV_DefineSpace(ownerHandle, indexPassword, nvPub);
         } catch (tss.TpmException e) {
-            if (!e.getMessage().contains("succeeded")) {
+            if (!e.getMessage().contains("NV_DEFINED")) {
                 LOG.debug("TpmLinuxV20.nvDefine returned error {}", e.getMessage());
                 throw new Tpm.TpmException("TpmLinuxV20.nvDefine returned error", e);
             }
@@ -334,24 +330,22 @@ class TpmWindowsV20 extends TpmWindows {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        tpmNew._allowErrors().NV_UndefineSpace(ownerHandle, nvIndex);
+        tpmNew.NV_UndefineSpace(ownerHandle, nvIndex);
     }
 
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
-        nvIndex.AuthValue = authPassword;
         return tpmNew.NV_Read(ownerHandle, nvIndex,  size,  0);
     }
 
     @Override
     public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-        //ownerHandle.AuthValue = authPassword;
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
+        ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
-        nvHandle.AuthValue = authPassword;
         tpmNew.NV_Write(ownerHandle, nvHandle, data,  0);
     }
 
