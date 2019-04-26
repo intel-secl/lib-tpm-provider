@@ -4,6 +4,7 @@
  */
 package com.intel.mtwilson.core.tpm;
 
+import gov.niarl.his.privacyca.TpmUtils;
 import tss.TpmDeviceBase;
 import java.io.IOException;
 
@@ -12,8 +13,11 @@ import java.io.IOException;
  * @author dczech
  */
 class TpmWindowsV20 extends TpmV20 {
-    TpmWindowsV20(String tpmToolsPath, TpmDeviceBase base) {
-        super(tpmToolsPath, base);
+    private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmV20.class);
+    private static final int NV_BUFFER_MAX = 768;
+
+    TpmWindowsV20(TpmDeviceBase base) {
+        super(base);
     }
 
     @Override
@@ -33,7 +37,23 @@ class TpmWindowsV20 extends TpmV20 {
 
     @Override
     public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
-        return new TpmWindowsV12(super.getTpmToolsPath()).getCredential(ownerAuth, credentialType);
+        if (credentialType != Tpm.CredentialType.EC) {
+            throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
+        }
+
+        if(nvIndexExists(getECIndex())) {
+            int size = nvIndexSize(getECIndex());
+            boolean sizeTooBig = (size > NV_BUFFER_MAX);
+            byte[] part1 = nvRead(ownerAuth, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
+            byte[] part2 = new byte[0];
+            if (sizeTooBig) {
+                part2 = nvRead(ownerAuth, getECIndex(), size-NV_BUFFER_MAX, NV_BUFFER_MAX);
+            }
+            return TpmUtils.concat(part1, part2);
+        } else {
+            log.debug("Requested credential doesn't exist");
+            throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
+        }
     }
 
     @Override
@@ -44,5 +64,9 @@ class TpmWindowsV20 extends TpmV20 {
     @Override
     public String getTcbMeasurement() throws IOException, TpmException {
         return new TpmWindowsV12(super.getTpmToolsPath()).getTcbMeasurement();
+    }
+
+    private int getECIndex() {
+        return 0x01c00002;
     }
 }

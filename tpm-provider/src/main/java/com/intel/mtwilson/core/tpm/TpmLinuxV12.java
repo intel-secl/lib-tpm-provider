@@ -346,7 +346,7 @@ class TpmLinuxV12 extends Tpm {
     }
 
     @Override
-    public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, TpmException {
+    public byte[] nvRead(byte[] authPassword, int index, int size, int offset) throws IOException, TpmException {
         File f = File.createTempFile("nvread", ".data");
         try (FileInputStream fis = new FileInputStream(f)) {
             LOG.debug("TpmLinuxV12.nvRead running command tpm_nvread -i " + index + " -s " + size + " -f " + f.getPath());
