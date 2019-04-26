@@ -284,9 +284,7 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString());
             } else {
-                return new TpmWindowsV20(
-                        Paths.get("/Program Files (x86)", "Intel", "Trustagent", "bin").toString(),
-                        new TpmDeviceTbs());
+                return new TpmWindowsV20(new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");
@@ -325,7 +323,7 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionWindows())) {
                 return new TpmWindowsV12(tpmToolsPath);
             } else {
-                return new TpmWindowsV20(tpmToolsPath, new TpmDeviceTbs());
+                return new TpmWindowsV20(new TpmDeviceTbs());
             }
         }
         throw new IllegalStateException("Unsupported Operating System");
@@ -754,13 +752,34 @@ public abstract class Tpm {
      * @param authPassword password to read from the NVRAM index.
      * @param index the index to read from
      * @param size the number of bytes to read
+     * @param offset the offset to read from
      * @return a buffer containing the bytes read. The number of returned bytes
      * may be different from the size requested
      * @throws java.io.IOException if there was an error executing the command
      * line Tpm Tools
      * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
      */
-    public abstract byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, TpmException;
+    public abstract byte[] nvRead(byte[] authPassword, int index, int size, int offset) throws IOException, TpmException;
+
+    /**
+     * <p>
+     * Read data from an NVRAM entry</p>
+     *
+     * On TPM 2.0, an NVRAM index can be accessed with that index's password, or
+     * via elevated authorization as OWNER or PLATFORM
+     *
+     * @param authPassword password to read from the NVRAM index.
+     * @param index the index to read from
+     * @param size the number of bytes to read
+     * @return a buffer containing the bytes read. The number of returned bytes
+     * may be different from the size requested
+     * @throws java.io.IOException if there was an error executing the command
+     * line Tpm Tools
+     * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
+     */
+    public byte[] nvRead(byte[] authPassword, int index, int size) throws IOException, TpmException {
+        return nvRead(authPassword, index, size, 0);
+    }
 
     /**
      * <p>

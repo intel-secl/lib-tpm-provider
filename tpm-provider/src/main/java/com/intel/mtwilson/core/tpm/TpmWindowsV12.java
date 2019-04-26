@@ -181,7 +181,7 @@ class TpmWindowsV12 extends Tpm {
     }
 
     @Override
-    public byte[] nvRead(byte[] ownerAuth, int index, int size) throws IOException, TpmException {
+    public byte[] nvRead(byte[] ownerAuth, int index, int size, int offset) throws IOException, TpmException {
         TpmTool nvRead = new TpmToolWindows(getTpmToolsPath(), "nvread");
         nvRead.addArgument("0x" + Integer.toHexString(index));
         nvRead.addArgument("0x" + Integer.toHexString(size));
