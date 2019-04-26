@@ -40,13 +40,6 @@ abstract public class TpmV20 extends Tpm {
         tpm._setDevice(base);
     }
 
-    //TODO: Remove after implentation of getEK in windows
-    TpmV20(String tpmToolsPath, TpmDeviceBase base) {
-        super(tpmToolsPath);
-        tpm = new tss.Tpm();
-        tpm._setDevice(base);
-    }
-
     private boolean changeAuth(byte[] oldAuth, byte[] newAuth) {
         Set<TPM_HANDLE> handles = new HashSet<>(Arrays.asList(TPM_HANDLE.from(TPM_RH.OWNER),
                 TPM_HANDLE.from(TPM_RH.ENDORSEMENT), TPM_HANDLE.from(TPM_RH.LOCKOUT)));
@@ -426,7 +419,7 @@ abstract public class TpmV20 extends Tpm {
     }
 
     @Override
-    public byte[] readAssetTag(byte[] ownerAuth) throws Tpm.TpmException {
+    public byte[] readAssetTag(byte[] ownerAuth) throws IOException, Tpm.TpmException {
         int index = getAssetTagIndex();
         log.debug("Reading asset tag at index {}", index);
         if (nvIndexExists(index)) {
@@ -499,13 +492,13 @@ abstract public class TpmV20 extends Tpm {
     }
 
     @Override
-    public byte[] nvRead(byte[] authPassword, int index, int size) throws Tpm.TpmException {
+    public byte[] nvRead(byte[] authPassword, int index, int size, int offset) throws Tpm.TpmException {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
         ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvIndex = new TPM_HANDLE(index);
         byte[] data;
         try {
-            data = tpm.NV_Read(ownerHandle, nvIndex,  size,  0);
+            data = tpm.NV_Read(ownerHandle, nvIndex,  size,  offset);
         } catch (tss.TpmException e) {
             log.debug("nvRead returned error {}", e.getMessage());
             throw new Tpm.TpmException("nvRead returned error ", e);
@@ -609,7 +602,7 @@ abstract public class TpmV20 extends Tpm {
         return "2.0";
     }
 
-    private int nvIndexSize(int index) throws Tpm.TpmException {
+    protected int nvIndexSize(int index) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         NV_ReadPublicResponse nvPub;
         try {
