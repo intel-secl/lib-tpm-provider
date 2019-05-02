@@ -7,6 +7,7 @@ package com.intel.mtwilson.core.tpm;
 
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
 import com.intel.mtwilson.core.common.tpm.model.IdentityRequest;
+import com.intel.mtwilson.core.tpm.model.PersistentIndex;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.util.PcrBanksMapper;
 import com.intel.mtwilson.core.tpm.util.Utils;
@@ -17,9 +18,8 @@ import tss.tpm.*;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.BufferUnderflowException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.security.PublicKey;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -59,16 +59,17 @@ abstract public class TpmV20 extends Tpm {
     }
 
     private void changeAuth(byte[] ownerAuth) throws IOException, Tpm.TpmException {
+        // take ownership and see if we can change it and revert it from a temporary
         if (!changeAuth(null, ownerAuth)) {
             byte[] newOwnerPass = TpmUtils.createRandomBytes(20);
             if (!changeAuth(ownerAuth, newOwnerPass)) {
                 // supplied newOwnerAuth is invalid
-                log.debug("Cannot take ownership; TPM claimed with a different password");
+                log.error("Cannot take ownership; TPM claimed with a different password");
                 throw new Tpm.TpmException("Cannot take ownership; TPM claimed with a different password");
             } else {
                 // supplied newOwnerAuth is valid, so change TPM owner pass back from the temporary and do it again
                 if (!changeAuth(newOwnerPass, ownerAuth)) {
-                    log.debug("CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
+                    log.error("CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
                     throw new Tpm.TpmException("CRITICAL ERROR: "
                             + "Could not change TPM password back from temporary. TPM must be reset from bios");
                 }
@@ -78,9 +79,10 @@ abstract public class TpmV20 extends Tpm {
 
     @Override
     public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
-        // basically do what tpm2-isowner.sh did, take ownership and see if we can change it and revert it from a temporary
         changeAuth(newOwnerAuth);
 
+        // Create an RSA storage key in the owner hierarchy. This is
+        // conventionally called an SRK
         TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
                 new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.decrypt,
                         TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
@@ -90,65 +92,24 @@ abstract public class TpmV20 extends Tpm {
                 new TPM2B_PUBLIC_KEY_RSA());
 
         CreatePrimaryResponse cpResponse;
-        TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-        oHandle.AuthValue = newOwnerAuth;
+        TPM_HANDLE oHandle = getOwnerHandle(newOwnerAuth);
         try {
             cpResponse = tpm.CreatePrimary(oHandle,
                     new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
         } catch (tss.TpmException e) {
-            log.debug("Failed to create storage primary key");
+            log.error("Failed to create storage primary key");
             throw new Tpm.TpmException("Failed to create storage primary key");
         }
 
-        byte[] persistent = new byte[] { (byte) 0x81, 0x00, 0x00, 0x00 };
         try {
             tpm.EvictControl(oHandle, cpResponse.handle,
-                    TPM_HANDLE.fromTpm(persistent));
+                    TPM_HANDLE.from(PersistentIndex.PK.getValue()));
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("NV_DEFINED")) {
-                log.debug("Failed to make storage primary key persistent");
+                log.error("Failed to make storage primary key persistent");
                 throw new Tpm.TpmException("Failed to make storage primary key persistent");
             }
         }
-    }
-
-    @Override
-    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
-        if (credentialType != Tpm.CredentialType.EC) {
-            throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
-        }
-        if(nvIndexExists(getECIndex()) && nvIndexExists(getECIndex()+1)) {
-            byte[] part1 = nvRead(ownerAuth, getECIndex(), nvIndexSize(getECIndex()));
-            byte[] part2 = nvRead(ownerAuth, getECIndex()+1, nvIndexSize(getECIndex()+1));
-            return TpmUtils.concat(part1, part2);
-        } else {
-            log.debug("Requested credential doesn't exist");
-            throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
-        }
-    }
-
-    @Override
-    public void setCredential(byte[] ownerAuth, Tpm.CredentialType credentialType, byte[] credentialBlob) throws IOException, Tpm.TpmException {
-        if(credentialType != Tpm.CredentialType.EC) {
-            throw new UnsupportedOperationException("Only CredentialType.EC is supported");
-        }
-        if(nvIndexExists(getECIndex())) {
-            nvRelease(ownerAuth, getECIndex());
-        }
-        if(nvIndexExists(getECIndex()+1)) {
-            nvRelease(ownerAuth, getECIndex() + 1);
-        }
-        if(credentialBlob == null) {
-            return;
-        }
-        int part1 = credentialBlob.length/2;
-        int part2 = credentialBlob.length - part1;
-        nvDefine(ownerAuth, ownerAuth, getECIndex(), part1, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
-        byte[] part1Buf = Arrays.copyOfRange(credentialBlob, 0, part1);
-        byte[] part2Buf = Arrays.copyOfRange(credentialBlob, part1, credentialBlob.length);
-        nvWrite(ownerAuth, getECIndex(), part1Buf);
-        nvDefine(ownerAuth, ownerAuth, getECIndex() + 1, part2, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
-        nvWrite(ownerAuth, getECIndex()+1, part2Buf);
     }
 
     private int findKeyHandle(String mask) throws Tpm.TpmException {
@@ -157,7 +118,7 @@ abstract public class TpmV20 extends Tpm {
             gcResponse = tpm.GetCapability(TPM_CAP.HANDLES,
                     TPM_HT.PERSISTENT.toInt() << 24, 16);
         } catch(tss.TpmException e) {
-            log.debug("Failed to list key handles");
+            log.error("Failed to list key handles");
             throw new Tpm.TpmException("Failed to list key handles");
         }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
@@ -184,7 +145,7 @@ abstract public class TpmV20 extends Tpm {
     }
 
     private int findEkHandle() throws Tpm.TpmException {
-        int index = findKeyHandle("0x810100..");
+        int index = findKeyHandle(String.valueOf(PersistentIndex.EK.getValue()));
         if (index != 0) {
             return index;
         } else {
@@ -198,12 +159,12 @@ abstract public class TpmV20 extends Tpm {
             gcResponse = tpm.GetCapability(TPM_CAP.HANDLES,
                     TPM_HT.PERSISTENT.toInt() << 24, 16);
         } catch(tss.TpmException e) {
-            log.debug("Failed to list key handles");
+            log.error("Failed to list key handles");
             throw new Tpm.TpmException("Failed to list key handles");
         }
         TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
 
-        int index = 0x81010000;
+        int index = PersistentIndex.EK.getValue();
         int count;
         for (int j = 0; j <= 255; j++) {
             count = 0;
@@ -222,7 +183,9 @@ abstract public class TpmV20 extends Tpm {
     private int createEk(byte[] ownerAuth, byte[] endorsePass) throws Tpm.TpmException {
         int ekHandle = getNextUsableHandle();
 
-        byte auth_policy[] = {
+        // This policy is a "standard" policy that is used with vendor-provided
+        // EKs
+        byte[] standardEKPolicy = new byte[] {
                 (byte)0x83, 0x71, (byte)0x97, 0x67, 0x44, (byte)0x84, (byte)0xB3, (byte)0xF8, 0x1A, (byte)0x90, (byte)0xCC,
                 (byte)0x8D, 0x46, (byte)0xA5, (byte)0xD7, 0x24, (byte)0xFD, 0x52, (byte)0xD7, 0x6E, 0x06, 0x52,
                 0x0B, 0x64, (byte)0xF2, (byte)0xA1, (byte)0xDA, 0x1B, 0x33, 0x14, 0x69, (byte)0xAA
@@ -231,25 +194,23 @@ abstract public class TpmV20 extends Tpm {
         TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
                 new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.adminWithPolicy, TPMA_OBJECT.decrypt,
                         TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
-                auth_policy,
+                standardEKPolicy,
                 new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
                         new TPMS_NULL_ASYM_SCHEME(),2048,0),
                 new TPM2B_PUBLIC_KEY_RSA());
 
         try {
-            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-            eHandle.AuthValue = endorsePass;
+            TPM_HANDLE eHandle = getEndorsementHandle(endorsePass);
             CreatePrimaryResponse cpResponse = tpm.CreatePrimary(eHandle,
                     new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
 
-            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-            oHandle.AuthValue = ownerAuth;
+            TPM_HANDLE oHandle = getOwnerHandle(ownerAuth);
             tpm.EvictControl(oHandle, cpResponse.handle,
                     TPM_HANDLE.from(ekHandle));
 
             tpm.FlushContext(cpResponse.handle);
         } catch (tss.TpmException e) {
-            log.debug("Failed to create EK");
+            log.error("Failed to create EK");
             throw new Tpm.TpmException("Failed to create EK");
         }
 
@@ -264,17 +225,15 @@ abstract public class TpmV20 extends Tpm {
         }
     }
 
-    private void clearAkHandle(byte[] ownerAuth) throws Tpm.TpmException {
-        int index = findKeyHandle("0x81018000");
+    private void clearAikHandle(byte[] ownerAuth) throws Tpm.TpmException {
+        int index = findKeyHandle(String.valueOf(PersistentIndex.AIK.getValue()));
         if (index != 0) {
-
-            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-            oHandle.AuthValue = ownerAuth;
+            TPM_HANDLE oHandle = getOwnerHandle(ownerAuth);
             try {
                 tpm.EvictControl(oHandle, TPM_HANDLE.from(index),
                         TPM_HANDLE.from(index));
             } catch (tss.TpmException e) {
-                log.debug("Failed to clear AIK handle");
+                log.error("Failed to clear AIK handle");
                 throw new Tpm.TpmException("Failed to clear AIK handle");
             }
         }
@@ -288,8 +247,8 @@ abstract public class TpmV20 extends Tpm {
         try {
             ekPub = tpm.ReadPublic(TPM_HANDLE.from(ekHandle));
         } catch (tss.TpmException e) {
-            log.debug("Failed to read public key");
-            throw new Tpm.TpmException("Failed to read public key");
+            log.error("Failed to retrieve EK public part");
+            throw new Tpm.TpmException("Failed to retrieve EK public part");
         }
 
         return ((TPM2B_PUBLIC_KEY_RSA)ekPub.outPublic.unique).buffer;
@@ -298,25 +257,27 @@ abstract public class TpmV20 extends Tpm {
     @Override
     public IdentityRequest collateIdentityRequest(byte[] ownerAuth, byte[] keyAuth, PublicKey pcaPubKey) throws IOException, Tpm.TpmException {
         int ekHandle = findOrCreateEk(ownerAuth, ownerAuth);
-        log.info("CollateIdentityRequest using EkHandle: {}", String.format("0x%08x", ekHandle));
-        // existing akHandle so we can use it
-        clearAkHandle(ownerAuth);
+        log.debug("CollateIdentityRequest using EkHandle: {}", String.format("0x%08x", ekHandle));
+        // clear existing aikHandle so we can use it
+        clearAikHandle(ownerAuth);
 
-        ReadPublicResponse akPub;
-        byte[] persistent = new byte[] { (byte) 0x81, 0x01, (byte) 0x80, 0x00 };
+        ReadPublicResponse aikPub;
         try {
+            // Make a session to authorize the key creation
             byte[] nonceCaller = TpmUtils.createRandomBytes(20);
             StartAuthSessionResponse sasResponse = tpm.StartAuthSession(TPM_HANDLE.NULL, TPM_HANDLE.NULL,
                     nonceCaller, new byte[0], TPM_SE.POLICY,
                     TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
 
-            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-            eHandle.AuthValue = ownerAuth;
+            // check that the policy is what it should be!
+            TPM_HANDLE eHandle = getEndorsementHandle(ownerAuth);
             tpm.PolicySecret(eHandle, sasResponse.handle,
                     new byte[0], new byte[0], new byte[0], 0);
 
+            // Tell the TPM to make a key with a non-null auth value
             TPMS_SENSITIVE_CREATE inSensitive = new TPMS_SENSITIVE_CREATE(keyAuth, new byte[0]);
 
+            // Create an RSA restricted signing key in the owner hierarchy
             TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
                     new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.sign,
                             TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
@@ -336,36 +297,60 @@ abstract public class TpmV20 extends Tpm {
             tpm.PolicySecret(eHandle, sasResponse.handle,
                     new byte[0], new byte[0], new byte[0], 0);
 
+            // load the new key
             TPM_HANDLE loadHandle = tpm._withSession(sasResponse.handle).Load(TPM_HANDLE.from(ekHandle),
                     cResponse.outPrivate, cResponse.outPublic);
             tpm.FlushContext(sasResponse.handle);
 
-            TPM_HANDLE oHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-            oHandle.AuthValue = ownerAuth;
+            TPM_HANDLE oHandle = getOwnerHandle(ownerAuth);
+            // Since the key has non-null auth, we need to set it explicitly in the
+            // handle
             loadHandle.AuthValue = inSensitive.userAuth;
             tpm.EvictControl(oHandle, loadHandle,
-                    TPM_HANDLE.fromTpm(persistent));
+                    TPM_HANDLE.from(PersistentIndex.AIK.getValue()));
             tpm.FlushContext(loadHandle);
 
-            akPub = tpm.ReadPublic(TPM_HANDLE.fromTpm(persistent));
+            aikPub = tpm.ReadPublic(TPM_HANDLE.from(PersistentIndex.AIK.getValue()));
         } catch (tss.TpmException e) {
-            log.debug("Failed to create AIK");
+            log.error("Failed to create AIK");
             throw new Tpm.TpmException("Failed to create AIK");
         }
 
-        // TPM 2.0 identityRequest and aikpub are used as the same
+        BigInteger aikBigInt = BigInteger.valueOf(PersistentIndex.AIK.getValue());
+        // TPM 2.0 identityRequest and aikPub are used as the same
         IdentityRequest newId = new IdentityRequest(this.getTpmVersion(),
-                ((TPM2B_PUBLIC_KEY_RSA)akPub.outPublic.unique).buffer,
-                ((TPM2B_PUBLIC_KEY_RSA)akPub.outPublic.unique).buffer, persistent, akPub.name);
+                ((TPM2B_PUBLIC_KEY_RSA)aikPub.outPublic.unique).buffer,
+                ((TPM2B_PUBLIC_KEY_RSA)aikPub.outPublic.unique).buffer, aikBigInt.toByteArray(), aikPub.name);
         return newId;
     }
 
     @Override
     public byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest)
             throws IOException, Tpm.TpmException {
-        int akHandle = findAikHandle();
+        int aikHandle = findAikHandle();
         int ekHandle = findEkHandle();
-        log.debug("AIK Handle : {}", akHandle);
+
+        /*
+         Credential consists of:
+                2 bytes Credential size
+                2 bytes Integrity size
+                32 bytes Integrity data
+                18 bytes Encrypted data
+         */
+        byte[] credential = proofRequest.getCredential();
+        // copying Integrity data (36 - 4 = 32 bytes)
+        byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 36);
+        // copying Encrypted data (54 - 36 = 18 bytes)
+        byte[] encIdentity = Arrays.copyOfRange(credential,36, 54);
+        TPMS_ID_OBJECT credentialBlob = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
+
+        /*
+         Secret consists of:
+                2 bytes Secret size
+                256 bytes Secret data
+         */
+        byte[] secret = proofRequest.getSecret();
+        secret = Arrays.copyOfRange(secret, 2, 258);
 
         byte[] recoveredSecret;
         try {
@@ -374,31 +359,23 @@ abstract public class TpmV20 extends Tpm {
                     nonceCaller, new byte[0], TPM_SE.POLICY,
                     TPMT_SYM_DEF.nullObject(), TPM_ALG_ID.SHA256);
 
-            TPM_HANDLE eHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
-            eHandle.AuthValue = ownerAuth;
+            TPM_HANDLE eHandle = getEndorsementHandle(ownerAuth);
             tpm.PolicySecret(eHandle, sasResponse.handle,
                     new byte[0], new byte[0], new byte[0], 0);
 
-            byte[] credential = proofRequest.getCredential();
-            byte[] secret = proofRequest.getSecret();
-            byte[] integrityHMAC = Arrays.copyOfRange(credential, 4, 4 + 32);
-            byte[] encIdentity = Arrays.copyOfRange(credential,36, 36 + 18);
-            secret = Arrays.copyOfRange(secret, 2, 2 + 256);
-            TPMS_ID_OBJECT credentialBlob = new TPMS_ID_OBJECT(integrityHMAC, encIdentity);
-
-            TPM_HANDLE aHandle = TPM_HANDLE.from(akHandle);
-            aHandle.AuthValue = keyAuth;
+            TPM_HANDLE aHandle = getIndexHandle(aikHandle, keyAuth);
             recoveredSecret = tpm._withSessions(TPM_HANDLE.pwSession(new byte[0]),
                     sasResponse.handle).ActivateCredential(aHandle, TPM_HANDLE.from(ekHandle), credentialBlob, secret);
             tpm.FlushContext(sasResponse.handle);
         } catch (tss.TpmException e) {
+            log.error("Failed to activate credential");
             throw new Tpm.TpmException("Failed to activate credential");
         }
 
         try {
             return Utils.decryptSymCaAttestation(recoveredSecret, proofRequest.getSymBlob());
         } catch (BufferUnderflowException | Utils.SymCaDecryptionException ex) {
-            log.debug("ActivateIdentity failed with exception", ex);
+            log.error("ActivateIdentity failed with exception", ex);
             throw new Tpm.TpmException("ActivateIdentity failed with exception", ex);
         }
     }
@@ -435,10 +412,6 @@ abstract public class TpmV20 extends Tpm {
         return 0x1c10110;
     }
 
-    private int getECIndex() {
-        return 0x01c00000;
-    }
-
     @Override
     public Set<Tpm.PcrBank> getPcrBanks() throws IOException, Tpm.TpmException {
         GetCapabilityResponse caps = tpm.GetCapability(TPM_CAP.ALGS, 0, TPM_ALG_ID.values().size());
@@ -453,7 +426,7 @@ abstract public class TpmV20 extends Tpm {
             }
         }
         if (supportedPcrBanks.isEmpty()) {
-            log.debug("Failed to retrieve list of PCR banks");
+            log.error("Failed to retrieve list of PCR banks");
             throw new Tpm.TpmException("Failed to retrieve list of PCR Banks");
         }
         return supportedPcrBanks;
@@ -461,16 +434,15 @@ abstract public class TpmV20 extends Tpm {
 
     @Override
     public void nvDefine(byte[] ownerAuth, byte[] indexPassword, int index, int size, Set<Tpm.NVAttribute> attributes) throws Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-        ownerHandle.AuthValue = ownerAuth;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         TPMA_NV nvAttributes = getTpmaNvFromAttributes(attributes);
         TPMS_NV_PUBLIC nvPub = new TPMS_NV_PUBLIC(nvHandle, TPM_ALG_ID.SHA256, nvAttributes, new byte[0], size);
         try {
-            tpm.NV_DefineSpace(ownerHandle, indexPassword, nvPub);
+            // Make a new simple NV slot
+            tpm.NV_DefineSpace(getOwnerHandle(ownerAuth), indexPassword, nvPub);
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("NV_DEFINED")) {
-                log.debug("nvDefine returned error {}", e.getMessage());
+                log.error("nvDefine returned error {}", e.getMessage());
                 throw new Tpm.TpmException("nvDefine returned error", e);
             }
         }
@@ -478,14 +450,13 @@ abstract public class TpmV20 extends Tpm {
 
     @Override
     public void nvRelease(byte[] ownerAuth, int index) throws Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
-        ownerHandle.AuthValue = ownerAuth;
-        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         try {
-            tpm.NV_UndefineSpace(ownerHandle, nvIndex);
+            // Delete the NV slot if it exists
+            tpm.NV_UndefineSpace(getOwnerHandle(ownerAuth), nvHandle);
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("HANDLE")) {
-                log.debug("nvRelease returned error {}", e.getMessage());
+                log.error("nvRelease returned error {}", e.getMessage());
                 throw new Tpm.TpmException("nvRelease returned error", e);
             }
         }
@@ -493,14 +464,13 @@ abstract public class TpmV20 extends Tpm {
 
     @Override
     public byte[] nvRead(byte[] authPassword, int index, int size, int offset) throws Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
-        ownerHandle.AuthValue = authPassword;
-        TPM_HANDLE nvIndex = new TPM_HANDLE(index);
+        TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         byte[] data;
         try {
-            data = tpm.NV_Read(ownerHandle, nvIndex,  size,  offset);
+            // Read data from NV slot
+            data = tpm.NV_Read(getIndexHandle(index, authPassword), nvHandle,  size,  offset);
         } catch (tss.TpmException e) {
-            log.debug("nvRead returned error {}", e.getMessage());
+            log.error("nvRead returned error {}", e.getMessage());
             throw new Tpm.TpmException("nvRead returned error ", e);
         }
         return data;
@@ -508,13 +478,12 @@ abstract public class TpmV20 extends Tpm {
 
     @Override
     public void nvWrite(byte[] authPassword, int index, byte[] data) throws Tpm.TpmException {
-        TPM_HANDLE ownerHandle = TPM_HANDLE.from(index);
-        ownerHandle.AuthValue = authPassword;
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         try {
-            tpm.NV_Write(ownerHandle, nvHandle, data,  0);
+            // Write data to NV slot
+            tpm.NV_Write(getIndexHandle(index, authPassword), nvHandle, data,  0);
         } catch (tss.TpmException e) {
-            log.debug("nvWrite returned error {}", e.getMessage());
+            log.error("nvWrite returned error {}", e.getMessage());
             throw new Tpm.TpmException("nvWrite returned error ", e);
         }
     }
@@ -524,12 +493,13 @@ abstract public class TpmV20 extends Tpm {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         NV_ReadPublicResponse nvPub;
         try {
+            // Read the public area from NV slot
             nvPub = tpm.NV_ReadPublic(nvHandle);
         } catch (tss.TpmException e) {
             if(e.getMessage().contains("HANDLE")) {
                 return false;
             } else {
-                log.debug("nvIndexExists returned error {}", e.getMessage());
+                log.error("nvIndexExists returned error {}", e.getMessage());
                 throw new Tpm.TpmException("nvIndexExists returned error", e);
             }
         }
@@ -537,18 +507,20 @@ abstract public class TpmV20 extends Tpm {
     }
 
     @Override
-    public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikBlob, byte[] aikAuth, byte[] nonce)
+    public TpmQuote getQuote(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs, byte[] aikHandle, byte[] aikAuth, byte[] nonce)
             throws IOException, Tpm.TpmException {
         byte[] pcrsResult = getPcrs(pcrBanks, pcrs);
 
+        // Quote selected PCR
         TPMS_PCR_SELECTION[] selectedPcrsToQuote = getTpmsPcrToQuoteSelections(pcrBanks, pcrs);
-        TPM_HANDLE aHandle = TPM_HANDLE.from(ByteBuffer.wrap(aikBlob).order(ByteOrder.BIG_ENDIAN).getInt());
+        TPM_HANDLE aHandle = TPM_HANDLE.fromTpm(aikHandle);
         aHandle.AuthValue = aikAuth;
         QuoteResponse quote;
         try {
             quote = tpm.Quote(aHandle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
         } catch (tss.TpmException e) {
-            throw new Tpm.TpmException("getQuote failed to generate quote");
+            log.error("Failed to generate quote");
+            throw new Tpm.TpmException("Failed to generate quote", e);
         }
 
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
@@ -577,6 +549,7 @@ abstract public class TpmV20 extends Tpm {
         return selectedPcrs.toArray(new TPMS_PCR_SELECTION[selectedPcrs.size()]);
     }
 
+    // Form array of required values of PCR for each Digest algorithm in chunks of 8
     private TPMS_PCR_SELECTION[] getTpmsPcrSelections(Set<Tpm.PcrBank> pcrBanks, Set<Tpm.Pcr> pcrs) {
         int[] pcrLists = pcrs.stream().map(Tpm.Pcr::toInt).mapToInt(i->i).toArray();
         Arrays.sort(pcrLists);
@@ -585,10 +558,10 @@ abstract public class TpmV20 extends Tpm {
             if(pcrLists.length < 8) {
                 selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 0, pcrLists.length)));
             } else {
-                if (pcrLists.length > 8) {
-                    selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 0, 8)));
-                }
-                if (pcrLists.length > 16) {
+                selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 0, 8)));
+                if (pcrLists.length < 16) {
+                    selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 8, pcrLists.length)));
+                } else {
                     selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 8, 16)));
                     selectedPcrs.add(new TPMS_PCR_SELECTION(alg, Arrays.copyOfRange(pcrLists, 16, pcrLists.length)));
                 }
@@ -608,7 +581,7 @@ abstract public class TpmV20 extends Tpm {
         try {
             nvPub = tpm.NV_ReadPublic(nvHandle);
         } catch (Exception e) {
-            log.debug("nvIndexSize could not find size of index {}", String.format("0x%08x", index));
+            log.error("nvIndexSize could not find size of index {}", String.format("0x%08x", index));
             throw new Tpm.TpmException("nvIndexSize could not find size of index " + String.format("0x%08x", index));
         }
         return nvPub.nvPublic.dataSize;
@@ -623,5 +596,23 @@ abstract public class TpmV20 extends Tpm {
     @Override
     public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
         return changeAuth(ownerAuth, ownerAuth);
+    }
+
+    private TPM_HANDLE getOwnerHandle(byte[] ownerAuth) {
+        TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
+        ownerHandle.AuthValue = ownerAuth;
+        return ownerHandle;
+    }
+
+    private TPM_HANDLE getEndorsementHandle(byte[] endorsementAuth) {
+        TPM_HANDLE endorsementHandle = TPM_HANDLE.from(TPM_RH.ENDORSEMENT);
+        endorsementHandle.AuthValue = endorsementAuth;
+        return endorsementHandle;
+    }
+
+    private TPM_HANDLE getIndexHandle(int index, byte[] indexAuth) {
+        TPM_HANDLE indexHandle = TPM_HANDLE.from(index);
+        indexHandle.AuthValue = indexAuth;
+        return indexHandle;
     }
 }

@@ -13,7 +13,7 @@ import java.io.IOException;
  * @author dczech
  */
 class TpmWindowsV20 extends TpmV20 {
-    private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmV20.class);
+    private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmWindowsV20.class);
     private static final int NV_BUFFER_MAX = 768;
 
     TpmWindowsV20(TpmDeviceBase base) {
@@ -26,13 +26,13 @@ class TpmWindowsV20 extends TpmV20 {
     }
 
     @Override
-    public void setCredential(byte[] ownerAuth, CredentialType credentialType, byte[] credential) {
-        throw new UnsupportedOperationException("TpmWindows.setCredential is not currently supported yet");
+    public byte[] getEndorsementKeyModulus(byte[] ownerAuth) throws IOException, TpmException {
+        throw new UnsupportedOperationException("TpmWindows.getEndorsementKeyModulus is not currently supported yet");
     }
 
     @Override
-    public byte[] getEndorsementKeyModulus(byte[] ownerAuth) throws IOException, TpmException {
-        throw new UnsupportedOperationException("TpmWindows.getEndorsementKeyModulus is not currently supported yet");
+    public void setCredential(byte[] ownerAuth, CredentialType credentialType, byte[] credential) {
+        throw new UnsupportedOperationException("TpmWindows.setCredential is not currently supported yet");
     }
 
     @Override
@@ -40,7 +40,6 @@ class TpmWindowsV20 extends TpmV20 {
         if (credentialType != Tpm.CredentialType.EC) {
             throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
         }
-
         if(nvIndexExists(getECIndex())) {
             int size = nvIndexSize(getECIndex());
             boolean sizeTooBig = (size > NV_BUFFER_MAX);
@@ -51,11 +50,12 @@ class TpmWindowsV20 extends TpmV20 {
             }
             return TpmUtils.concat(part1, part2);
         } else {
-            log.debug("Requested credential doesn't exist");
+            log.error("Requested credential doesn't exist");
             throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
         }
     }
 
+    //There is no hardware dependency for following functions hence using as it is from v12
     @Override
     public String getModuleLog() throws IOException, TpmException {
         return new TpmWindowsV12(super.getTpmToolsPath()).getModuleLog();
