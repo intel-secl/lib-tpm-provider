@@ -50,7 +50,7 @@ class TpmWindowsV20 extends TpmV20 {
             }
             return TpmUtils.concat(part1, part2);
         } else {
-            log.error("Requested credential doesn't exist");
+            log.debug("Requested credential doesn't exist");
             throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
         }
     }
