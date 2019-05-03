@@ -54,7 +54,7 @@ class TpmLinuxV20 extends TpmV20 {
             byte[] part2 = nvRead(ownerAuth, getECIndex()+1, nvIndexSize(getECIndex()+1));
             return TpmUtils.concat(part1, part2);
         } else {
-            log.error("Requested credential doesn't exist");
+            log.debug("Requested credential doesn't exist");
             throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
         }
     }
