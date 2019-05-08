@@ -317,7 +317,11 @@ public abstract class Tpm {
                     throw new IllegalStateException("Could not automatically find TPM 1.2 Tools");
                 }
             } else {
-                return new TpmLinuxV20(new TpmDeviceLinux());
+                if (Files.exists(Paths.get("/dev", "tpm0"))) {
+                    return new TpmLinuxV20(new TpmDeviceLinux());
+                } else {
+                    throw new IllegalStateException("TPM driver is not loaded");
+                }
             }
         } else if (SystemUtils.IS_OS_WINDOWS) {
             if (V12.equals(detectTpmVersionWindows())) {
@@ -356,7 +360,11 @@ public abstract class Tpm {
             if (V12.equals(detectTpmVersionLinux())) {
                 return new TpmLinuxV12(tpmToolsPath);
             } else {
-                return new TpmLinuxV20(new TpmDeviceLinux());
+                if (Files.exists(Paths.get("/dev", "tpm0"))) {
+                    return new TpmLinuxV20(new TpmDeviceLinux());
+                } else {
+                    throw new IllegalStateException("TPM driver is not loaded");
+                }
             }
         } else if (SystemUtils.IS_OS_WINDOWS) {
             if (V12.equals(detectTpmVersionWindows())) {
