@@ -33,83 +33,11 @@ import static com.intel.mtwilson.core.tpm.util.NvAttributeMapper.getTpmaNvFromAt
  */
 abstract public class TpmV20 extends Tpm {
     private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmV20.class);
-    private tss.Tpm tpm;
+    protected tss.Tpm tpm;
 
     TpmV20(TpmDeviceBase base) {
         tpm = new tss.Tpm();
         tpm._setDevice(base);
-    }
-
-    private boolean changeAuth(byte[] oldAuth, byte[] newAuth) {
-        Set<TPM_HANDLE> handles = new HashSet<>(Arrays.asList(TPM_HANDLE.from(TPM_RH.OWNER),
-                TPM_HANDLE.from(TPM_RH.ENDORSEMENT), TPM_HANDLE.from(TPM_RH.LOCKOUT)));
-
-        for (TPM_HANDLE handle : handles) {
-            if (oldAuth != null) {
-                handle.AuthValue = oldAuth;
-            }
-            try {
-                tpm.HierarchyChangeAuth(handle, newAuth);
-            } catch (tss.TpmException e) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private void changeAuth(byte[] ownerAuth) throws IOException, Tpm.TpmException {
-        // take ownership and see if we can change it and revert it from a temporary
-        if (!changeAuth(null, ownerAuth)) {
-            byte[] newOwnerPass = TpmUtils.createRandomBytes(20);
-            if (!changeAuth(ownerAuth, newOwnerPass)) {
-                // supplied newOwnerAuth is invalid
-                log.error("Cannot take ownership; TPM claimed with a different password");
-                throw new Tpm.TpmException("Cannot take ownership; TPM claimed with a different password");
-            } else {
-                // supplied newOwnerAuth is valid, so change TPM owner pass back from the temporary and do it again
-                if (!changeAuth(newOwnerPass, ownerAuth)) {
-                    log.error("CRITICAL ERROR: Could not change TPM password back from temporary. TPM must be reset from bios");
-                    throw new Tpm.TpmException("CRITICAL ERROR: "
-                            + "Could not change TPM password back from temporary. TPM must be reset from bios");
-                }
-            }
-        }
-    }
-
-    @Override
-    public void takeOwnership(byte[] newOwnerAuth) throws IOException, Tpm.TpmException {
-        changeAuth(newOwnerAuth);
-
-        // Create an RSA storage key in the owner hierarchy. This is
-        // conventionally called an SRK
-        TPMT_PUBLIC inPublic = new TPMT_PUBLIC(TPM_ALG_ID.SHA256,
-                new TPMA_OBJECT(TPMA_OBJECT.restricted, TPMA_OBJECT.userWithAuth, TPMA_OBJECT.decrypt,
-                        TPMA_OBJECT.fixedTPM, TPMA_OBJECT.fixedParent, TPMA_OBJECT.sensitiveDataOrigin),
-                new byte[0],
-                new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
-                        new TPMS_NULL_ASYM_SCHEME(),2048,0),
-                new TPM2B_PUBLIC_KEY_RSA());
-
-        CreatePrimaryResponse cpResponse;
-        TPM_HANDLE oHandle = getOwnerHandle(newOwnerAuth);
-        try {
-            cpResponse = tpm.CreatePrimary(oHandle,
-                    new TPMS_SENSITIVE_CREATE(), inPublic, new byte[0], new TPMS_PCR_SELECTION[0]);
-        } catch (tss.TpmException e) {
-            log.error("Failed to create storage primary key");
-            throw new Tpm.TpmException("Failed to create storage primary key");
-        }
-
-        try {
-            tpm.EvictControl(oHandle, cpResponse.handle,
-                    TPM_HANDLE.from(PersistentIndex.PK.getValue()));
-        } catch (tss.TpmException e) {
-            if (!e.getMessage().contains("NV_DEFINED")) {
-                log.error("Failed to make storage primary key persistent");
-                throw new Tpm.TpmException("Failed to make storage primary key persistent");
-            }
-        }
     }
 
     private int findKeyHandle(String mask) throws Tpm.TpmException {
@@ -145,7 +73,7 @@ abstract public class TpmV20 extends Tpm {
     }
 
     private int findEkHandle() throws Tpm.TpmException {
-        int index = findKeyHandle(String.valueOf(PersistentIndex.EK.getValue()));
+        int index = findKeyHandle("0x810100..");
         if (index != 0) {
             return index;
         } else {
@@ -587,18 +515,7 @@ abstract public class TpmV20 extends Tpm {
         return nvPub.nvPublic.dataSize;
     }
 
-    /**
-     *
-     * @param ownerAuth
-     * @return
-     * @throws IOException
-     */
-    @Override
-    public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
-        return changeAuth(ownerAuth, ownerAuth);
-    }
-
-    private TPM_HANDLE getOwnerHandle(byte[] ownerAuth) {
+    protected TPM_HANDLE getOwnerHandle(byte[] ownerAuth) {
         TPM_HANDLE ownerHandle = TPM_HANDLE.from(TPM_RH.OWNER);
         ownerHandle.AuthValue = ownerAuth;
         return ownerHandle;
