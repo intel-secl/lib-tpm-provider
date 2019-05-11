@@ -43,10 +43,10 @@ class TpmWindowsV20 extends TpmV20 {
         if(nvIndexExists(getECIndex())) {
             int size = nvIndexSize(getECIndex());
             boolean sizeTooBig = (size > NV_BUFFER_MAX);
-            byte[] part1 = nvRead(ownerAuth, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
+            byte[] part1 = nvRead(null, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
             byte[] part2 = new byte[0];
             if (sizeTooBig) {
-                part2 = nvRead(ownerAuth, getECIndex(), size-NV_BUFFER_MAX, NV_BUFFER_MAX);
+                part2 = nvRead(null, getECIndex(), size-NV_BUFFER_MAX, NV_BUFFER_MAX);
             }
             return TpmUtils.concat(part1, part2);
         } else {
@@ -64,6 +64,11 @@ class TpmWindowsV20 extends TpmV20 {
     @Override
     public String getTcbMeasurement() throws IOException, TpmException {
         return new TpmWindowsV12(super.getTpmToolsPath()).getTcbMeasurement();
+    }
+
+    @Override
+    public boolean isOwnedWithAuth(byte[] ownerAuth) throws IOException {
+        return true;
     }
 
     private int getECIndex() {
