@@ -11,8 +11,8 @@ import tss.tpm.*;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  *
@@ -122,8 +122,10 @@ class TpmLinuxV20 extends TpmV20 {
     }
 
     private boolean changeAuth(byte[] oldAuth, byte[] newAuth) {
-        Set<TPM_HANDLE> handles = new HashSet<>(Arrays.asList(TPM_HANDLE.from(TPM_RH.OWNER),
-                TPM_HANDLE.from(TPM_RH.ENDORSEMENT), TPM_HANDLE.from(TPM_RH.LOCKOUT)));
+        List<TPM_HANDLE> handles = new ArrayList<>();
+        handles.add(TPM_HANDLE.from(TPM_RH.OWNER));
+        handles.add(TPM_HANDLE.from(TPM_RH.ENDORSEMENT));
+        handles.add(TPM_HANDLE.from(TPM_RH.LOCKOUT));
 
         for (TPM_HANDLE handle : handles) {
             if (oldAuth != null) {
