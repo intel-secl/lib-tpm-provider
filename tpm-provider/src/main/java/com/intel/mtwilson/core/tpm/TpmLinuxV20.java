@@ -5,14 +5,18 @@
 package com.intel.mtwilson.core.tpm;
 
 import com.intel.mtwilson.core.tpm.model.PersistentIndex;
+import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
+import com.intel.mtwilson.core.tpm.shell.TpmTool;
 import gov.niarl.his.privacyca.TpmUtils;
+import org.apache.commons.io.FileUtils;
 import tss.TpmDeviceBase;
 import tss.tpm.*;
 
+import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.charset.Charset;
+import java.nio.file.Paths;
+import java.util.*;
 
 /**
  *
@@ -102,12 +106,49 @@ class TpmLinuxV20 extends TpmV20 {
     //There is no hardware dependency for following functions hence using as it is from v12
     @Override
     public String getModuleLog() throws IOException, TpmException {
-        return new TpmLinuxV12(null).getModuleLog();
+        File measureLogFile = Paths.get("/opt", "trustagent", "var", "measureLog.xml").toFile();
+        String content;
+        if (measureLogFile.exists()) {
+            content = FileUtils.readFileToString(measureLogFile);
+        } else {
+            File outFile = null;
+            try {
+                outFile = File.createTempFile("measureLog", ".xml");
+                Map<String, String> variables = new HashMap<>();
+                variables.put("OUTFILE", outFile.getAbsolutePath());
+                TpmTool command = new TpmTool(getTpmToolsPath(), "module_analysis.sh");
+                CommandLineResult result = command.execute(variables);
+                if (result.getReturnCode() != 0) {
+                    log.debug("Error running command [{}]: {}", command.getExecutable(), result.getStandardError());
+                    throw new Tpm.TpmException("TpmLinux.getModuleLog module_analysis.sh returned nonzero error", result.getReturnCode());
+                }
+                log.debug("command stdout: {}", result.getStandardOut());
+                content = FileUtils.readFileToString(outFile);
+            } catch (Tpm.TpmException ex) {
+                throw new Tpm.TpmException(ex);
+            } catch (IOException ex) {
+                throw new IOException(ex);
+            } finally {
+                if (outFile!=null) {
+                    boolean deletedOutFile = outFile.delete();
+                    if (!deletedOutFile) {
+                        outFile.deleteOnExit();
+                    }
+                }
+            }
+        }
+        return getModulesFromMeasureLogXml(content);
     }
 
     @Override
     public String getTcbMeasurement() throws IOException, TpmException {
-        return new TpmLinuxV12(null).getTcbMeasurement();
+        File tcbMeasurementFile = Paths.get("/opt", "trustagent", "var", "measureLog.xml").toFile();
+        if (tcbMeasurementFile.exists()) {
+            return FileUtils.readFileToString(tcbMeasurementFile, Charset.forName("UTF-8"));
+        } else {
+            log.debug("TpmLinux.getTcbMeasurement measurement.xml does not exist");
+            throw new Tpm.TpmTcbMeasurementMissingException("TpmLinux.getTcbMeasurement measurement.xml does not exist");
+        }
     }
 
     /**

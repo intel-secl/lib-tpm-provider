@@ -311,11 +311,7 @@ public abstract class Tpm {
     public static Tpm open() throws IOException {
         if (SystemUtils.IS_OS_LINUX) {
             if (V12.equals(detectTpmVersionLinux())) {
-                if (Files.exists(Paths.get("/opt", "trustagent", "bin", "NIARL_TPM_Module"))) {
-                    return new TpmLinuxV12("/opt/trustagent/bin");
-                } else {
-                    throw new IllegalStateException("Could not automatically find TPM 1.2 Tools");
-                }
+                throw new IllegalStateException("TPM 1.2 is not supported on Linux");
             } else {
                 if (Files.exists(Paths.get("/dev", "tpm0"))) {
                     return new TpmLinuxV20(new TpmDeviceLinux());
@@ -358,7 +354,7 @@ public abstract class Tpm {
     public static Tpm open(String tpmToolsPath) throws IOException {
         if (SystemUtils.IS_OS_LINUX) {
             if (V12.equals(detectTpmVersionLinux())) {
-                return new TpmLinuxV12(tpmToolsPath);
+                throw new IllegalStateException("TPM 1.2 is not supported on Linux");
             } else {
                 if (Files.exists(Paths.get("/dev", "tpm0"))) {
                     return new TpmLinuxV20(new TpmDeviceLinux());
