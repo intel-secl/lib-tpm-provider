@@ -258,10 +258,10 @@ class TpmLinuxV12 extends Tpm {
             LOG.debug("TpmLinuxV12.setAssetTag Index exists. Releasing index...");
             nvRelease(ownerAuth, index);
             LOG.debug("TpmLinuxV12.setAssetTag Creating new index...");
-            nvDefine(ownerAuth, randPasswd, index, 32, EnumSet.of(NVAttribute.AUTHWRITE));
+            nvDefine(ownerAuth, randPasswd, index, 48, EnumSet.of(NVAttribute.AUTHWRITE));
         } else {
             LOG.debug("TpmLinuxV12.setAssetTag Index does not exist. Creating it...");
-            nvDefine(ownerAuth, randPasswd, index, 32, EnumSet.of(NVAttribute.AUTHWRITE));
+            nvDefine(ownerAuth, randPasswd, index, 48, EnumSet.of(NVAttribute.AUTHWRITE));
         }
         nvWrite(randPasswd, index, assetTagHash);
         LOG.debug("TpmLinuxV12.setAssettag Provisioned asset tag");
@@ -273,7 +273,7 @@ class TpmLinuxV12 extends Tpm {
         LOG.debug("TpmLinuxV12.readAssetTag Checking if Asset Tag Index exists...");
         if (nvIndexExists(index)) {
             LOG.debug("TpmLinuxV12.readAssetTag Asset Tag Index {} exists", index);
-            return nvRead(ownerAuth, index, 32);
+            return nvRead(ownerAuth, index, 48);
         } else {
             throw new TpmException("Asset Tag has not been provisoined on this TPM");
         }

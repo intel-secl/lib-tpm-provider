@@ -111,7 +111,7 @@ class TpmWindowsV12 extends Tpm {
         } else {
             LOG.debug("TpmWindows.setAssetTag index does not exist, creating it...");
         }
-        nvDefine(ownerAuth, ownerAuth, index, 32, EnumSet.of(NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD));
+        nvDefine(ownerAuth, ownerAuth, index, 48, EnumSet.of(NVAttribute.AUTHWRITE, NVAttribute.AUTHREAD));
         nvWrite(ownerAuth, index, assetTagHash);
         LOG.debug("TpmWindows.setAssetTag provisioned asset tag");
     }
@@ -122,7 +122,7 @@ class TpmWindowsV12 extends Tpm {
         LOG.debug("TpmWindows.readAssetTag reading asset tag at index {} ...", index);
         if (nvIndexExists(index)) {
             LOG.debug("TpmWindows.readAssetTag asset tag index {} exists", index);
-            return nvRead(ownerAuth, index, 32); //change the size to 32 bytes since we are using sha256 of asset tag
+            return nvRead(ownerAuth, index, 48); //change the size to 48 bytes since we are using sha256 of asset tag
         } else {
             throw new TpmException("TpmWindows.readAssetTag asset tag has not been provisioned on this TPM");
         }
