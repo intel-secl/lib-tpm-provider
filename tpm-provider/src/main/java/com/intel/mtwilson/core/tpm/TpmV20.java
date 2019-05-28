@@ -318,7 +318,7 @@ abstract public class TpmV20 extends Tpm {
         } else {
             log.debug("Index does not exist, creating it...");
         }
-        nvDefine(ownerAuth, ownerAuth, index, 32, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
+        nvDefine(ownerAuth, ownerAuth, index, 48, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
         nvWrite(ownerAuth, index, assetTagHash);
         log.debug("Successfully provisioned asset tag");
     }
@@ -329,7 +329,7 @@ abstract public class TpmV20 extends Tpm {
         log.debug("Reading asset tag at index {}", index);
         if (nvIndexExists(index)) {
             log.debug("Index {} exists", index);
-            return nvRead(ownerAuth, index, 32);
+            return nvRead(ownerAuth, index, 48);
         } else {
             throw new Tpm.TpmException("Asset tag has not been provisioned on this TPM");
         }
