@@ -1,8 +1,7 @@
 /*
  * Copyright (C) 2019 Intel Corporation
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause
  */
-
 package com.intel.mtwilson.core.tpm;
 
 import com.intel.mtwilson.core.common.tpm.model.IdentityProofRequest;
