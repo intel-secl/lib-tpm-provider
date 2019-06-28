@@ -1,9 +1,9 @@
 /*
  * Copyright (C) 2019 Intel Corporation
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause
  */
-
 package com.intel.mtwilson.core.tpm.model;
+
 /**
  *
  * @author ddhawale
