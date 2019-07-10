@@ -154,7 +154,7 @@ class TpmWindowsV12 extends Tpm {
     }
 
     @Override
-    public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, TpmException {
+    public void nvWrite(byte[] authPassword, int index, byte[] data, int offset) throws IOException, TpmException {
         TpmTool nvWrite = new TpmToolWindows(getTpmToolsPath(), "nvwrite");
         nvWrite.addArgument("0x" + Integer.toHexString(index));
         nvWrite.addArgument(TpmUtils.byteArrayToHexString(authPassword));
