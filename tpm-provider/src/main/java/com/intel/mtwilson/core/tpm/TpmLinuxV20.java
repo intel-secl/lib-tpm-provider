@@ -72,34 +72,17 @@ class TpmLinuxV20 extends TpmV20 {
         if(nvIndexExists(getECIndex())) {
             nvRelease(ownerAuth, getECIndex());
         }
-        if(nvIndexExists(getECIndex()+1)) {
-            nvRelease(ownerAuth, getECIndex() + 1);
-        }
         if(credentialBlob == null) {
             return;
         }
-        int part1 = credentialBlob.length/2;
-        int part2 = credentialBlob.length - part1;
-        nvDefine(ownerAuth, ownerAuth, getECIndex(), part1, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
-        byte[] part1Buf = Arrays.copyOfRange(credentialBlob, 0, part1);
-        byte[] part2Buf = Arrays.copyOfRange(credentialBlob, part1, credentialBlob.length);
-        nvWrite(ownerAuth, getECIndex(), part1Buf);
-        nvDefine(ownerAuth, ownerAuth, getECIndex() + 1, part2, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
-        nvWrite(ownerAuth, getECIndex()+1, part2Buf);
-    }
-
-    @Override
-    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
-        if (credentialType != Tpm.CredentialType.EC) {
-            throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
-        }
-        if(nvIndexExists(getECIndex()) && nvIndexExists(getECIndex()+1)) {
-            byte[] part1 = nvRead(ownerAuth, getECIndex(), nvIndexSize(getECIndex()));
-            byte[] part2 = nvRead(ownerAuth, getECIndex()+1, nvIndexSize(getECIndex()+1));
-            return TpmUtils.concat(part1, part2);
-        } else {
-            log.debug("Requested credential doesn't exist");
-            throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
+        int size = credentialBlob.length;
+        boolean sizeTooBig = (size > NV_BUFFER_MAX);
+        nvDefine(ownerAuth, ownerAuth, getECIndex(), size, Tpm.NVAttribute.AUTHWRITE, Tpm.NVAttribute.AUTHREAD);
+        byte[] part1Buf = Arrays.copyOfRange(credentialBlob, 0, sizeTooBig?NV_BUFFER_MAX:size);
+        nvWrite(ownerAuth, getECIndex(), part1Buf, 0);
+        if (sizeTooBig) {
+            byte[] part2Buf = Arrays.copyOfRange(credentialBlob, NV_BUFFER_MAX, credentialBlob.length);
+            nvWrite(ownerAuth, getECIndex(), part2Buf, NV_BUFFER_MAX);
         }
     }
 
@@ -199,9 +182,5 @@ class TpmLinuxV20 extends TpmV20 {
                 }
             }
         }
-    }
-
-    private int getECIndex() {
-        return 0x01c00000;
     }
 }
