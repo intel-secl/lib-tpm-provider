@@ -848,31 +848,11 @@ public abstract class Tpm {
      * @param index the index to read from
      * @param data the data which to write to the NVRAM index. Must not exceed
      * the size defined by the NVRAM index.
-     * @param offset the offset to write to
      * @throws java.io.IOException if there was an error executing the command
      * line Tpm Tools
      * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
      */
-    public abstract void nvWrite(byte[] authPassword, int index, byte[] data, int offset) throws IOException, TpmException;
-
-    /**
-     * <p>
-     * Write data to an NVRAM entry</p>
-     *
-     * On TPM 2.0, an NVRAM index can be accessed with that index's password, or
-     * via elevated authorization as OWNER or PLATFORM
-     *
-     * @param authPassword password to read from the NVRAM index.
-     * @param index the index to read from
-     * @param data the data which to write to the NVRAM index. Must not exceed
-     * the size defined by the NVRAM index.
-     * @throws java.io.IOException if there was an error executing the command
-     * line Tpm Tools
-     * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
-     */
-    public void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, TpmException {
-        nvWrite(authPassword, index, data, 0);
-    }
+    public abstract void nvWrite(byte[] authPassword, int index, byte[] data) throws IOException, TpmException;
 
     /**
      * <p>

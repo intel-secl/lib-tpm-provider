@@ -32,7 +32,6 @@ import static com.intel.mtwilson.core.tpm.util.NvAttributeMapper.getTpmaNvFromAt
  */
 abstract public class TpmV20 extends Tpm {
     private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmV20.class);
-    protected static final int NV_BUFFER_MAX = 768;
     protected tss.Tpm tpm;
 
     TpmV20(TpmDeviceBase base) {
@@ -180,26 +179,6 @@ abstract public class TpmV20 extends Tpm {
         }
 
         return ((TPM2B_PUBLIC_KEY_RSA)ekPub.outPublic.unique).buffer;
-    }
-
-    @Override
-    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
-        if (credentialType != Tpm.CredentialType.EC) {
-            throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
-        }
-        if(nvIndexExists(getECIndex())) {
-            int size = nvIndexSize(getECIndex());
-            boolean sizeTooBig = (size > NV_BUFFER_MAX);
-            byte[] part1 = nvRead(ownerAuth, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
-            byte[] part2 = new byte[0];
-            if (sizeTooBig) {
-                part2 = nvRead(ownerAuth, getECIndex(), size-NV_BUFFER_MAX, NV_BUFFER_MAX);
-            }
-            return TpmUtils.concat(part1, part2);
-        } else {
-            log.debug("Requested credential doesn't exist");
-            throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
-        }
     }
 
     @Override
@@ -355,10 +334,6 @@ abstract public class TpmV20 extends Tpm {
         }
     }
 
-    protected int getECIndex() {
-        return 0x01c00002;
-    }
-
     @Override
     public int getAssetTagIndex() {
         return 0x1c10110;
@@ -429,11 +404,11 @@ abstract public class TpmV20 extends Tpm {
     }
 
     @Override
-    public void nvWrite(byte[] authPassword, int index, byte[] data, int offset) throws Tpm.TpmException {
+    public void nvWrite(byte[] authPassword, int index, byte[] data) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         try {
             // Write data to NV slot
-            tpm.NV_Write(getIndexHandle(index, authPassword), nvHandle, data,  offset);
+            tpm.NV_Write(getIndexHandle(index, authPassword), nvHandle, data,  0);
         } catch (tss.TpmException e) {
             log.error("nvWrite returned error {}", e.getMessage());
             throw new Tpm.TpmException("nvWrite returned error ", e);
@@ -527,7 +502,7 @@ abstract public class TpmV20 extends Tpm {
         return "2.0";
     }
 
-    private int nvIndexSize(int index) throws Tpm.TpmException {
+    protected int nvIndexSize(int index) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         NV_ReadPublicResponse nvPub;
         try {
