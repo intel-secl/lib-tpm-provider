@@ -6,7 +6,9 @@ package com.intel.mtwilson.core.tpm;
 
 import gov.niarl.his.privacyca.TpmUtils;
 import tss.TpmDeviceBase;
+
 import java.io.IOException;
+import java.util.List;
 
 /**
  *
@@ -61,9 +63,15 @@ class TpmWindowsV20 extends TpmV20 {
         return new TpmWindowsV12(super.getTpmToolsPath()).getModuleLog();
     }
 
+    /**
+     *
+     * @return
+     * @throws IOException
+     * @throws TpmException
+     */
     @Override
-    public String getTcbMeasurement() throws IOException, TpmException {
-        return new TpmWindowsV12(super.getTpmToolsPath()).getTcbMeasurement();
+    public List<String> getTcbMeasurements() throws IOException, TpmException {
+        return new TpmWindowsV12(super.getTpmToolsPath()).getTcbMeasurements();
     }
 
     @Override

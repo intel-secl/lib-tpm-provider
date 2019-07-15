@@ -4,6 +4,8 @@
  */
 package com.intel.mtwilson.core.tpm;
 
+import com.intel.mtwilson.core.common.utils.MeasurementUtils;
+import com.intel.mtwilson.core.tpm.model.CertifiedKey;
 import com.intel.mtwilson.core.tpm.model.TpmQuote;
 import com.intel.mtwilson.core.tpm.shell.CommandLineResult;
 import com.intel.mtwilson.core.tpm.shell.TpmTool;
@@ -535,21 +537,6 @@ public abstract class Tpm {
      * @throws com.intel.mtwilson.core.tpm.Tpm.TpmException
      */
     public abstract byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest) throws IOException, TpmException;
-
-    /**
-     * Enum that specifies whether a key is for BINDING or SIGNING
-     */
-    public static enum KeyType {
-
-        /**
-         * Indicates Key is for binding
-         */
-        BIND,
-        /**
-         * Indicates Key is for signing
-         */
-        SIGN
-    }
 
     /**
      * <p>

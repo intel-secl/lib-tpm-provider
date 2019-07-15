@@ -441,8 +441,7 @@ public class TpmIntegrationTest {
         assertThat(step4).isEqualTo(aikCert.getEncoded());
         byte[] nonce = aikSecret;
         System.out.println("Getting Tpm Quote...");
-        // TODO: replace null with aiksecret
-        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), ownerAuth, nonce);
+        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), aikSecret, nonce);
         assertThat(quote).isNotNull();
         assertThat(quote.getPcrBanks()).isEqualTo(tpm.getPcrBanks());
         assertThat(quote.getQuoteData()).isNotEmpty();
@@ -496,8 +495,7 @@ public class TpmIntegrationTest {
         assertThat(a2).isEqualTo(aikCert.getEncoded());
         byte[] nonce = aikSecret;
         System.out.println("Getting quote...");
-        // TODO: replace null with aiksecret
-        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), null, nonce);
+        TpmQuote quote = tpm.getQuote(tpm.getPcrBanks(), EnumSet.allOf(Pcr.class), idreq.getAikBlob(), aikSecret, nonce);
         assertThat(quote).isNotNull();
         assertThat(quote.getPcrBanks()).isEqualTo(tpm.getPcrBanks());
         assertThat(quote.getQuoteData()).isNotEmpty();

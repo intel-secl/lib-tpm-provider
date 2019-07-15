@@ -19,6 +19,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -276,14 +277,9 @@ class TpmWindowsV12 extends Tpm {
      * @throws TpmException
      */
     @Override
-    public String getTcbMeasurement() throws IOException, TpmException {
-        File tcbMeasurementFile = Paths.get("/Windows", "Logs", "MeasuredBoot", "measurement.xml").toFile();
-        if (tcbMeasurementFile.exists()) {
-            return FileUtils.readFileToString(tcbMeasurementFile, Charset.forName("UTF-8"));
-        } else {
-            LOG.debug("TpmWindows.getTcbMeasurement measurement.xml does not exist");
-            throw new TpmException("TpmWindows.getTcbMeasurement measurement.xml does not exist");
-        }
+    public List<String> getTcbMeasurements() throws IOException, TpmException {
+        File tcbMeasurementdir = Paths.get("/Windows", "Logs", "MeasuredBoot").toFile();
+        return getTcbMeasurements(tcbMeasurementdir);
     }
 
     @Override
