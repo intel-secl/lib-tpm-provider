@@ -539,21 +539,6 @@ public abstract class Tpm {
     public abstract byte[] activateIdentity(byte[] ownerAuth, byte[] keyAuth, IdentityProofRequest proofRequest) throws IOException, TpmException;
 
     /**
-     * Enum that specifies whether a key is for BINDING or SIGNING
-     */
-    public static enum KeyType {
-
-        /**
-         * Indicates Key is for binding
-         */
-        BIND,
-        /**
-         * Indicates Key is for signing
-         */
-        SIGN
-    }
-
-    /**
      * <p>
      * Stores the hash of an asset tag to TPM NVRAM. Asset Tag hash must be 32 bytes in length</p>
      *

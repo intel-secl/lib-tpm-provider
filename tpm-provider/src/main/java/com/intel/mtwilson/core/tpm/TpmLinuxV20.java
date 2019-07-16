@@ -12,8 +12,7 @@ import org.apache.commons.io.FileUtils;
 import tss.TpmDeviceBase;
 import tss.tpm.*;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.file.Paths;
 import java.util.*;
@@ -140,16 +139,17 @@ class TpmLinuxV20 extends TpmV20 {
         return getModulesFromMeasureLogXml(content);
     }
 
+    /**
+     *
+     * @return @throws IOException
+     * @throws TpmException
+     */
     @Override
-    public String getTcbMeasurement() throws IOException, TpmException {
-        File tcbMeasurementFile = Paths.get("/opt", "trustagent", "var", "measureLog.xml").toFile();
-        if (tcbMeasurementFile.exists()) {
-            return FileUtils.readFileToString(tcbMeasurementFile, Charset.forName("UTF-8"));
-        } else {
-            log.debug("TpmLinux.getTcbMeasurement measurement.xml does not exist");
-            throw new Tpm.TpmTcbMeasurementMissingException("TpmLinux.getTcbMeasurement measurement.xml does not exist");
-        }
+    public List<String> getTcbMeasurements() throws TpmException {
+        File tcbMeasurementsDir = Paths.get("/opt", "trustagent", "var", "ramfs").toFile();
+        return getTcbMeasurements(tcbMeasurementsDir);
     }
+
 
     /**
      *
