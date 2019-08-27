@@ -430,7 +430,7 @@ abstract public class TpmV20 extends Tpm {
             // Read data from NV slot
             data = tpm.NV_Read(getIndexHandle(index, authPassword), nvHandle,  size,  offset);
         } catch (tss.TpmException e) {
-            log.error("nvRead returned error {}", e.getMessage());
+            log.debug("nvRead returned error {}", e.getMessage());
             throw new Tpm.TpmException("nvRead returned error " + e);
         }
         return data;
