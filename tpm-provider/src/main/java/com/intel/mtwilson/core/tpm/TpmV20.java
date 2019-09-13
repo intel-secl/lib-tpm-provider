@@ -32,6 +32,7 @@ import static com.intel.mtwilson.core.tpm.util.NvAttributeMapper.getTpmaNvFromAt
  */
 abstract public class TpmV20 extends Tpm {
     private final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TpmV20.class);
+    protected static final int NV_BUFFER_MAX = 768;
     protected tss.Tpm tpm;
 
     TpmV20(TpmDeviceBase base) {
@@ -39,7 +40,7 @@ abstract public class TpmV20 extends Tpm {
         tpm._setDevice(base);
     }
 
-    private int findKeyHandle(String mask) throws Tpm.TpmException {
+    private TPML_HANDLE getPersistentHandles() throws Tpm.TpmException {
         GetCapabilityResponse gcResponse;
         try {
             gcResponse = tpm.GetCapability(TPM_CAP.HANDLES,
@@ -48,8 +49,11 @@ abstract public class TpmV20 extends Tpm {
             log.error("Failed to list key handles");
             throw new Tpm.TpmException("Failed to list key handles");
         }
-        TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
+        return (TPML_HANDLE) gcResponse.capabilityData;
+    }
 
+    private int findKeyHandle(String mask) throws Tpm.TpmException {
+        TPML_HANDLE handles = getPersistentHandles();
         Pattern p = Pattern.compile(mask);
         Matcher m;
         for (int i = 0; i < handles.handle.length; i++) {
@@ -81,16 +85,7 @@ abstract public class TpmV20 extends Tpm {
     }
 
     private int getNextUsableHandle() throws Tpm.TpmException {
-        GetCapabilityResponse gcResponse;
-        try {
-            gcResponse = tpm.GetCapability(TPM_CAP.HANDLES,
-                    TPM_HT.PERSISTENT.toInt() << 24, 16);
-        } catch(tss.TpmException e) {
-            log.error("Failed to list key handles");
-            throw new Tpm.TpmException("Failed to list key handles");
-        }
-        TPML_HANDLE handles = (TPML_HANDLE) gcResponse.capabilityData;
-
+        TPML_HANDLE handles = getPersistentHandles();
         int index = PersistentIndex.EK.getValue();
         int count;
         for (int j = 0; j <= 255; j++) {
@@ -124,7 +119,7 @@ abstract public class TpmV20 extends Tpm {
                 standardEKPolicy,
                 new TPMS_RSA_PARMS(new TPMT_SYM_DEF_OBJECT(TPM_ALG_ID.AES, 128, TPM_ALG_ID.CFB),
                         new TPMS_NULL_ASYM_SCHEME(),2048,0),
-                new TPM2B_PUBLIC_KEY_RSA());
+                new TPM2B_PUBLIC_KEY_RSA(new byte[256]));
 
         try {
             TPM_HANDLE eHandle = getEndorsementHandle(endorsePass);
@@ -179,6 +174,40 @@ abstract public class TpmV20 extends Tpm {
         }
 
         return ((TPM2B_PUBLIC_KEY_RSA)ekPub.outPublic.unique).buffer;
+    }
+
+    @Override
+    public byte[] getCredential(byte[] ownerAuth, Tpm.CredentialType credentialType) throws Tpm.TpmException, IOException {
+        if (credentialType != Tpm.CredentialType.EC) {
+            throw new UnsupportedOperationException("Credential Types other than EC (Endorsement Credential) are not yet supported");
+        }
+        if(nvIndexExists(getECIndex())) {
+            byte[] auth = null;
+            int size = nvIndexSize(getECIndex());
+            boolean sizeTooBig = (size > NV_BUFFER_MAX);
+
+            byte[] part1;
+            try {
+                part1 = nvRead(null, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
+            } catch (Tpm.TpmException e) {
+                if (e.getMessage().contains("{AUTH_FAIL}")) {
+                    part1 = nvRead(ownerAuth, getECIndex(), sizeTooBig?NV_BUFFER_MAX:size, 0);
+                    auth = ownerAuth;
+                } else {
+                    log.error("Could not read credential from index {}", String.format("0x%08x", getECIndex()));
+                    throw new Tpm.TpmException("Could not read credential from index" + String.format("0x%08x", getECIndex()));
+                }
+            }
+
+            byte[] part2 = new byte[0];
+            if (sizeTooBig) {
+                part2 = nvRead(auth, getECIndex(), size-NV_BUFFER_MAX, NV_BUFFER_MAX);
+            }
+            return TpmUtils.concat(part1, part2);
+        } else {
+            log.debug("Requested credential doesn't exist");
+            throw new Tpm.TpmCredentialMissingException("Requested credential doesn't exist");
+        }
     }
 
     @Override
@@ -334,6 +363,10 @@ abstract public class TpmV20 extends Tpm {
         }
     }
 
+    protected int getECIndex() {
+        return 0x01c00002;
+    }
+
     @Override
     public int getAssetTagIndex() {
         return 0x1c10110;
@@ -370,7 +403,7 @@ abstract public class TpmV20 extends Tpm {
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("NV_DEFINED")) {
                 log.error("nvDefine returned error {}", e.getMessage());
-                throw new Tpm.TpmException("nvDefine returned error", e);
+                throw new Tpm.TpmException("nvDefine returned error " + e);
             }
         }
     }
@@ -384,7 +417,7 @@ abstract public class TpmV20 extends Tpm {
         } catch (tss.TpmException e) {
             if (!e.getMessage().contains("HANDLE")) {
                 log.error("nvRelease returned error {}", e.getMessage());
-                throw new Tpm.TpmException("nvRelease returned error", e);
+                throw new Tpm.TpmException("nvRelease returned error " + e);
             }
         }
     }
@@ -397,21 +430,21 @@ abstract public class TpmV20 extends Tpm {
             // Read data from NV slot
             data = tpm.NV_Read(getIndexHandle(index, authPassword), nvHandle,  size,  offset);
         } catch (tss.TpmException e) {
-            log.error("nvRead returned error {}", e.getMessage());
-            throw new Tpm.TpmException("nvRead returned error ", e);
+            log.debug("nvRead returned error {}", e.getMessage());
+            throw new Tpm.TpmException("nvRead returned error " + e);
         }
         return data;
     }
 
     @Override
-    public void nvWrite(byte[] authPassword, int index, byte[] data) throws Tpm.TpmException {
+    public void nvWrite(byte[] authPassword, int index, byte[] data, int offset) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         try {
             // Write data to NV slot
-            tpm.NV_Write(getIndexHandle(index, authPassword), nvHandle, data,  0);
+            tpm.NV_Write(getIndexHandle(index, authPassword), nvHandle, data,  offset);
         } catch (tss.TpmException e) {
             log.error("nvWrite returned error {}", e.getMessage());
-            throw new Tpm.TpmException("nvWrite returned error ", e);
+            throw new Tpm.TpmException("nvWrite returned error " + e);
         }
     }
 
@@ -427,7 +460,7 @@ abstract public class TpmV20 extends Tpm {
                 return false;
             } else {
                 log.error("nvIndexExists returned error {}", e.getMessage());
-                throw new Tpm.TpmException("nvIndexExists returned error", e);
+                throw new Tpm.TpmException("nvIndexExists returned error " + e);
             }
         }
         return index == nvPub.nvPublic.nvIndex.handle;
@@ -447,7 +480,7 @@ abstract public class TpmV20 extends Tpm {
             quote = tpm.Quote(aHandle, nonce, new TPMS_NULL_SIG_SCHEME(), selectedPcrsToQuote);
         } catch (tss.TpmException e) {
             log.error("Failed to generate quote");
-            throw new Tpm.TpmException("Failed to generate quote", e);
+            throw new Tpm.TpmException("Failed to generate quote");
         }
 
         byte[] combined = ArrayUtils.addAll(quote.toTpm(), pcrsResult);
@@ -502,14 +535,14 @@ abstract public class TpmV20 extends Tpm {
         return "2.0";
     }
 
-    protected int nvIndexSize(int index) throws Tpm.TpmException {
+    private int nvIndexSize(int index) throws Tpm.TpmException {
         TPM_HANDLE nvHandle = new TPM_HANDLE(index);
         NV_ReadPublicResponse nvPub;
         try {
             nvPub = tpm.NV_ReadPublic(nvHandle);
-        } catch (Exception e) {
-            log.error("nvIndexSize could not find size of index {}", String.format("0x%08x", index));
-            throw new Tpm.TpmException("nvIndexSize could not find size of index " + String.format("0x%08x", index));
+        } catch (tss.TpmException e) {
+            log.error("nvIndexSize returned error {}", e.getMessage());
+            throw new Tpm.TpmException("nvIndexSize returned error " + e);
         }
         return nvPub.nvPublic.dataSize;
     }

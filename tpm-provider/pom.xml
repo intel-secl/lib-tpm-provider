@@ -3,14 +3,14 @@
     
     <groupId>com.intel.mtwilson.core</groupId>
     <artifactId>lib-tpm-provider</artifactId>
-    <version>1.3</version>
+    <version>1.3.1</version>
 
     <packaging>jar</packaging>
     
     <parent>
         <groupId>com.intel.mtwilson.maven</groupId>
         <artifactId>mtwilson-maven-java</artifactId>
-        <version>4.5-SNAPSHOT</version>
+        <version>4.6-SNAPSHOT</version>
         <relativePath/>
     </parent>
     
@@ -179,7 +179,7 @@
         <dependency>
             <groupId>com.intel.mtwilson.core</groupId>
             <artifactId>lib-common</artifactId>
-            <version>1.3</version>
+            <version>1.3.1</version>
         </dependency>
         
         <!-- common-java -->
